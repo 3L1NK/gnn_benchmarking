@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.ipynb_checkpoints
+
+# Virtual environment
+.venv/
+venv/
+
+# Data and outputs
+data/
+outputs/
+logs/
