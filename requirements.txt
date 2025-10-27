@@ -1,0 +1,32 @@
+# --- Wheel sources (keep these lines at the top) ---
+--find-links https://download.pytorch.org/whl/cpu
+--find-links https://data.pyg.org/whl/torch-2.3.0+cpu.html
+
+# --- Core math/DS ---
+numpy==2.02
+pandas==2.2.3
+scikit-learn==1.5.2
+matplotlib==3.9.2
+tqdm==4.66.5
+yfinance==0.2.44
+
+# --- Models / graph ---
+xgboost==2.1.1
+networkx==3.3
+nodevectors==0.2.0
+
+# --- PyTorch (CPU on macOS) ---
+torch==2.3.0
+torchvision==0.18.0
+torchaudio==2.3.0
+
+# --- PyTorch Geometric stack ---
+torch-scatter==2.1.2
+torch-sparse==0.6.18
+torch-cluster==1.6.3
+torch-spline-conv==1.2.2
+torch-geometric==2.5.3
+torch-geometric-temporal==0.56.2
+
+# --- Notebook support (VS Code can use it) ---
+jupyter==1.0.0
