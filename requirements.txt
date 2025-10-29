@@ -12,7 +12,7 @@ yfinance==0.2.44
 
 # --- Models / graph ---
 xgboost==2.1.1
-networkx==3.3
+networkx==2.5.1
 nodevectors==0.2.0
 
 # --- PyTorch (CPU on macOS) ---
