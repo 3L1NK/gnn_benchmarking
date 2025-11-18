@@ -5,6 +5,7 @@
 # --- Core math/DS ---
 numpy==2.02
 pandas==2.2.3
+pyarrow==17.0.0
 scikit-learn==1.5.2
 matplotlib==3.9.2
 tqdm==4.66.5
