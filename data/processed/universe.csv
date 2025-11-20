@@ -1,0 +1,43 @@
+ticker,sector,industry
+AAPL,Technology,Consumer Electronics
+MSFT,Technology,Software
+GOOGL,Technology,Internet Services
+NVDA,Technology,Semiconductors
+IBM,Technology,IT Services
+ORCL,Technology,Software
+
+JPM,Financials,Banking
+BAC,Financials,Banking
+GS,Financials,Investment Banking
+C,Financials,Banking
+WFC,Financials,Banking
+
+WMT,Consumer Staples,Retail
+COST,Consumer Staples,Retail
+MCD,Consumer Discretionary,Restaurants
+NKE,Consumer Discretionary,Apparel
+HD,Consumer Discretionary,Retail
+AMZN,Consumer Discretionary,E Commerce
+
+META,Communication Services,Social Media
+DIS,Communication Services,Entertainment
+
+PFE,Healthcare,Pharma
+UNH,Healthcare,Insurance
+JNJ,Healthcare,Pharma
+
+XOM,Energy,Oil Gas
+CVX,Energy,Oil Gas
+
+CAT,Industrials,Machinery
+RTX,Industrials,Aerospace
+
+LIN,Materials,Chemicals
+
+NEE,Utilities,Electric Utilities
+
+PLD,Real Estate,Industrial REIT
+
+IEF,Bond,Treasury
+TLT,Bond,Treasury
+GLD,Commodity,Gold
