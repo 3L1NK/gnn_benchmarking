@@ -10,8 +10,8 @@ from utils.features import add_technical_features
 from utils.graphs import rolling_corr_edges, graphical_lasso_precision
 from utils.metrics import mse, rank_ic, hit_rate
 from utils.backtest import backtest_long_short
-from utils.plots import plot_equity_curve
-from utils.seed import set_seed
+from utils.plot import plot_equity_curve
+from utils.seeds import set_seed
 
 
 def train_baseline(config):
