@@ -6,12 +6,12 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 from models.lstm_model import LSTMModel
-from utils.seed import set_seed
+from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
 from utils.metrics import mse, rank_ic, hit_rate
 from utils.backtest import backtest_long_short
-from utils.plots import plot_equity_curve
+from utils.plot import plot_equity_curve
 
 
 class LSTMDataset(Dataset):

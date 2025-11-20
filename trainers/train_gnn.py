@@ -9,14 +9,13 @@ import torch
 from torch_geometric.loader import DataLoader as GeoDataLoader
 
 from models.gnn_model import StaticGNN
-from models.tgat_model import TGATModel
-from utils.seed import set_seed
+from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
 from utils.graphs import rolling_corr_edges, build_graph_snapshot
 from utils.metrics import mse, rank_ic, hit_rate
 from utils.backtest import backtest_long_short
-from utils.plots import plot_equity_curve
+from utils.plot import plot_equity_curve
 
 
 def _build_snapshots_and_targets(config):
@@ -254,6 +253,13 @@ def _train_tgat(config):
     We still build daily snapshots, but TGAT sees time stamps
     and can attend over time.
     """
+    try:
+        from models.tgat_model import TGATModel
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "TGATModel requires the torch-geometric-temporal dependency; install the optional "
+            "GNN requirements (see requirements.txt) or switch the config to use GCN/GAT."
+        ) from exc
     set_seed(42)
 
     device = torch.device(
