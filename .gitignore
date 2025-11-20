@@ -9,6 +9,5 @@ venv/
 .venv_gnn/
 
 # Data and outputs
-data/
 outputs/
 logs/
