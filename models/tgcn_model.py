@@ -1,33 +1,34 @@
+# models/tgcn_model.py
+
 import torch
-import torch.nn as nn
+from torch import nn
 from torch_geometric_temporal.nn.recurrent import TGCN
 
 
 class TemporalGCNModel(nn.Module):
     """
-    Simple Temporal GCN model using TGCN from torch_geometric_temporal.
-    Works as a drop-in replacement for TGAT in your training pipeline.
+    Simple temporal GCN model using the TGCN cell.
 
-    Input:
-        x           node features
-        edge_index  graph edges
-        edge_weight graph edge weights
-        time_index  (ignored, only for API compatibility)
+    At each time step t it takes:
+      x_t           node features at day t, shape [N_t, F]
+      edge_index_t  edges at day t
+      edge_weight_t edge weights
+      h_prev        previous hidden state, shape [N_prev, H] or None
 
-    Output:
-        logits for binary classification (buy or sell)
+    It returns:
+      logits_t      node logits at day t, shape [N_t]
+      h_t           new hidden state, shape [N_t, H]
     """
 
     def __init__(self, input_dim, hidden_dim, dropout):
         super().__init__()
-        self.tgcn = TGCN(input_dim, hidden_dim)
-        self.linear = nn.Linear(hidden_dim, 1)
+        self.tgcn = TGCN(in_channels=input_dim, out_channels=hidden_dim)
         self.dropout = nn.Dropout(dropout)
+        self.out = nn.Linear(hidden_dim, 1)
 
-    def forward(self, x, edge_index, edge_weight, time_index=None):
-        # temporal graph conv
-        h = self.tgcn(x, edge_index, edge_weight)
-        h = self.dropout(h)
-        # output logits
-        out = self.linear(h).squeeze(-1)
-        return out
+    def forward(self, x, edge_index, edge_weight, h_prev=None):
+        # TGCN keeps its own hidden state if h_prev is passed in
+        h_t = self.tgcn(x, edge_index, edge_weight, h_prev)
+        h_t = self.dropout(h_t)
+        logits = self.out(h_t).squeeze(-1)
+        return logits, h_t

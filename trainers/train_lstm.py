@@ -1,5 +1,6 @@
-from pathlib import Path
+# trainers/train_lstm.py
 
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
@@ -14,51 +15,77 @@ from utils.backtest import backtest_long_short
 from utils.plot import plot_equity_curve
 
 
+# ----------------------------- DATASET -----------------------------
+
 class LSTMDataset(Dataset):
     def __init__(self, df, feat_cols, lookback, horizon):
-        self.df = df.sort_values(["ticker", "date"]).copy()
-        self.feat_cols = feat_cols
         self.lookback = lookback
         self.horizon = horizon
+        self.feat_cols = feat_cols
 
-        self.df["target"] = self.df.groupby("ticker")["log_ret_1d"].shift(-horizon)
-        self.df = self.df.dropna(subset=["target"])
+        # sort and clean NaNs
+        df = df.sort_values(["ticker", "date"]).reset_index(drop=True).copy()
+        df = df.dropna(subset=feat_cols + ["log_ret_1d"]).reset_index(drop=True)
 
-        self.index = []
-        for ticker, g in self.df.groupby("ticker"):
+        # target
+        df["target"] = df.groupby("ticker")["log_ret_1d"].shift(-horizon)
+        df = df.dropna(subset=["target"]).reset_index(drop=True)
+
+        self.df = df
+        self.index_list = []
+
+        # build (ticker, index) pairs
+        for ticker, g in df.groupby("ticker"):
             g = g.reset_index(drop=True)
-            for i in range(lookback, len(g)):
-                self.index.append((ticker, g.index[i]))
+            for pos in range(lookback, len(g)):
+                self.index_list.append((ticker, pos))
 
     def __len__(self):
-        return len(self.index)
+        return len(self.index_list)
 
     def __getitem__(self, idx):
-        ticker, row_idx = self.index[idx]
+        ticker, pos = self.index_list[idx]
+
         g = self.df[self.df["ticker"] == ticker].reset_index(drop=True)
-        pos = g.index.get_loc(row_idx)
+
         start = pos - self.lookback
         end = pos
 
         seq = g.loc[start:end - 1, self.feat_cols].values.astype(float)
         target = float(g.loc[end, "target"])
+        date = g.loc[end, "date"]
+        ticker_id = ticker
 
-        return torch.tensor(seq, dtype=torch.float32), torch.tensor(target, dtype=torch.float32)
+        return (
+            torch.tensor(seq, dtype=torch.float32),  # shape [lookback, F]
+            torch.tensor(target, dtype=torch.float32),
+            date,
+            ticker_id,
+        )
 
+
+# ----------------------------- TRAIN FUNCTION -----------------------------
 
 def train_lstm(config):
     set_seed(42)
 
     device = torch.device(config["training"]["device"] if torch.cuda.is_available() else "cpu")
 
+    # load + features
     df = load_price_panel(
-        config["data"]["price_file"], config["data"]["start_date"], config["data"]["end_date"]
+        config["data"]["price_file"],
+        config["data"]["start_date"],
+        config["data"]["end_date"],
     )
     df, feat_cols = add_technical_features(df)
 
+    # clean feature NaNs
+    df = df.dropna(subset=list(feat_cols) + ["log_ret_1d"]).reset_index(drop=True)
+
+    # date split
+    df["date"] = pd.to_datetime(df["date"])
     val_start = pd.to_datetime(config["training"]["val_start"])
     test_start = pd.to_datetime(config["training"]["test_start"])
-    df["date"] = pd.to_datetime(df["date"])
 
     train_df = df[df["date"] < val_start]
     val_df = df[(df["date"] >= val_start) & (df["date"] < test_start)]
@@ -75,6 +102,10 @@ def train_lstm(config):
     val_loader = DataLoader(val_ds, batch_size=config["training"]["batch_size"], shuffle=False)
     test_loader = DataLoader(test_ds, batch_size=config["training"]["batch_size"], shuffle=False)
 
+    print("Train samples:", len(train_ds))
+    print("Val samples:", len(val_ds))
+    print("Test samples:", len(test_ds))
+
     model = LSTMModel(
         input_dim=len(feat_cols),
         hidden_dim=config["model"]["hidden_dim"],
@@ -86,16 +117,19 @@ def train_lstm(config):
     loss_fn = torch.nn.MSELoss()
 
     best_val = float("inf")
-    bad_epochs = 0
     patience = config["training"]["patience"]
+    bad_epochs = 0
+
     out_dir = Path(config["evaluation"]["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / "best_lstm.pt"
 
+    # ----------------------------- TRAINING -----------------------------
     for epoch in range(config["training"]["max_epochs"]):
         model.train()
         train_losses = []
-        for x, y in train_loader:
+
+        for x, y, _, _ in train_loader:
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad()
             pred = model(x)
@@ -104,10 +138,11 @@ def train_lstm(config):
             optimizer.step()
             train_losses.append(loss.item())
 
+        # validation
         model.eval()
         val_losses = []
         with torch.no_grad():
-            for x, y in val_loader:
+            for x, y, _, _ in val_loader:
                 x, y = x.to(device), y.to(device)
                 pred = model(x)
                 val_losses.append(loss_fn(pred, y).item())
@@ -116,30 +151,64 @@ def train_lstm(config):
         mean_val = float(np.mean(val_losses)) if val_losses else float("nan")
         print(f"[LSTM] Epoch {epoch} train {mean_train:.5f} val {mean_val:.5f}")
 
+        # early stopping
         if mean_val < best_val:
             best_val = mean_val
-            bad_epochs = 0
             torch.save(model.state_dict(), model_path)
+            bad_epochs = 0
         else:
             bad_epochs += 1
             if bad_epochs >= patience:
                 print("Early stopping")
                 break
 
+    # ----------------------------- TEST + BACKTEST -----------------------------
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
-    # collect predictions at last step of each sequence for test_df
     rows = []
     with torch.no_grad():
-        for x, y in test_loader:
+        for x, y, dates, tickers in test_loader:
             x = x.to(device)
-            pred = model(x).cpu().numpy()
+            preds = model(x).cpu().numpy()
             y_np = y.numpy()
-            # we do not know exact date here. if needed you can extend dataset to return date and ticker
-            # for now we just compute aggregate metrics
-            for yp, yt in zip(pred, y_np):
-                rows.append({"pred": float(yp), "realized_ret": float(yt)})
 
-    test_df_small = pd.DataFrame(rows)
-    print("Test MSE", mse(test_df_small["pred"], test_df_small["realized_ret"]))
+            for p, r, d, t in zip(preds, y_np, dates, tickers):
+                rows.append(
+                    {
+                        "date": pd.to_datetime(d),
+                        "ticker": t,
+                        "pred": float(p),
+                        "realized_ret": float(r),
+                    }
+                )
+
+    pred_df = pd.DataFrame(rows).sort_values("date")
+    pred_df.to_csv(out_dir / "lstm_predictions.csv", index=False)
+
+    # IC + hit
+    daily_metrics = []
+    for d, g in pred_df.groupby("date"):
+        if g["pred"].nunique() < 2 or g["realized_ret"].nunique() < 2:
+            ic = np.nan
+        else:
+            ic = rank_ic(g["pred"], g["realized_ret"])
+        hit = hit_rate(g["pred"], g["realized_ret"], top_k=config["evaluation"]["top_k"])
+        daily_metrics.append({"date": d, "ic": ic, "hit": hit})
+
+    daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
+    print("LSTM mean IC:", daily_metrics["ic"].dropna().mean())
+    print("LSTM mean hit:", daily_metrics["hit"].dropna().mean())
+
+    # backtest
+    curve, daily_ret, stats = backtest_long_short(
+        pred_df,
+        config["evaluation"]["top_k"],
+        config["evaluation"]["transaction_cost_bps"],
+        config["evaluation"]["risk_free_rate"],
+    )
+
+    curve.to_csv(out_dir / "lstm_equity_curve.csv", header=["value"])
+    plot_equity_curve(curve, "LSTM long short", out_dir / "lstm_equity_curve.png")
+
+    print("LSTM backtest stats:", stats)
