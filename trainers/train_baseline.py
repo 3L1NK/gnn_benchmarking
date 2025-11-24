@@ -104,7 +104,7 @@ def train_xgb_raw(config):
     )
 
 def train_xgb_node2vec(config):
-    from nodevectors import Node2Vec
+    from torch_geometric.nn import Node2Vec
     from xgboost import XGBRegressor
     import networkx as nx
 
