@@ -11,3 +11,4 @@ venv/
 # Data and outputs
 outputs/
 logs/
+.DS_Store
