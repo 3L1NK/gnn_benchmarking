@@ -53,7 +53,7 @@ class LSTMDataset(Dataset):
 
         seq = g.loc[start:end - 1, self.feat_cols].values.astype(float)
         target = float(g.loc[end, "target"])
-        date = g.loc[end, "date"]
+        date = str(g.loc[end, "date"])
         ticker_id = ticker
 
         return (
