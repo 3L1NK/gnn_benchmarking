@@ -1,8 +1,8 @@
-experiment_name: tgat
+experiment_name: tgcn
 
 model:
   family: gnn
-  type: tgat
+  type: tgcn
   input_dim: 32
   hidden_dim: 128
   num_layers: 3
