@@ -43,7 +43,6 @@ def _build_feature_panel(config):
     df = df.dropna(subset=["target"])
     return df, feat_cols
 
-
 def _time_masks(dates, val_start, test_start):
     dates = pd.to_datetime(dates)
     val_start = pd.to_datetime(val_start)
@@ -55,14 +54,26 @@ def _time_masks(dates, val_start, test_start):
 
 
 def train_xgb_raw(config):
+    """
+    Plain XGBoost baseline:
+    Predict next day returns using only per asset technical features.
+    """
+
     from xgboost import XGBRegressor
 
     set_seed(42)
 
+    # -----------------------------
+    # 1. Load data and features
+    # -----------------------------
     df, feat_cols = _build_feature_panel(config)
-    dates = df["date"]
+    df["date"] = pd.to_datetime(df["date"])
+
+    # -----------------------------
+    # 2. Time split
+    # -----------------------------
     train_mask, val_mask, test_mask = _time_masks(
-        dates,
+        df["date"],
         config["training"]["val_start"],
         config["training"]["test_start"],
     )
@@ -74,20 +85,32 @@ def train_xgb_raw(config):
     X_val, y_val = X[val_mask], y[val_mask]
     X_test, y_test = X[test_mask], y[test_mask]
 
+    # -----------------------------
+    # 3. XGBoost model
+    # -----------------------------
     model = XGBRegressor(
-        n_estimators=600,
+        n_estimators=500,
         learning_rate=0.05,
         max_depth=4,
         subsample=0.8,
         colsample_bytree=0.8,
         objective="reg:squarederror",
         tree_method="hist",
+        random_state=42,
     )
 
-    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
+    model.fit(
+        X_train,
+        y_train,
+        eval_set=[(X_val, y_val)],
+        verbose=50
+    )
 
     preds_test = model.predict(X_test)
 
+    # -----------------------------
+    # 4. Build prediction dataframe
+    # -----------------------------
     df_test = df.loc[test_mask, ["date", "ticker"]].copy()
     df_test["pred"] = preds_test
     df_test["realized_ret"] = y_test
@@ -96,6 +119,9 @@ def train_xgb_raw(config):
     out_dir.mkdir(parents=True, exist_ok=True)
     df_test.to_csv(out_dir / "xgb_raw_predictions.csv", index=False)
 
+    # -----------------------------
+    # 5. Evaluate and backtest
+    # -----------------------------
     _evaluate_and_backtest(
         df_test,
         out_dir,
