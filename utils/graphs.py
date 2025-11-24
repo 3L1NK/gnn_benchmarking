@@ -4,6 +4,14 @@ import networkx as nx
 from sklearn.covariance import GraphicalLasso
 from torch_geometric.utils import from_networkx
 
+def industry_edges(universe_df: pd.DataFrame):
+    edges = []
+    for industry, group in universe_df.groupby("industry"):
+        tickers = list(group["ticker"])
+        for i in range(len(tickers)):
+            for j in range(i + 1, len(tickers)):
+                edges.append((tickers[i], tickers[j], 1.0))
+    return edges
 
 def sector_edges(universe_df: pd.DataFrame):
     # universe_df: columns ticker, sector
