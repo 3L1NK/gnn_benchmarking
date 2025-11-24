@@ -2,7 +2,7 @@ data:
   price_file: "data/processed/prices.parquet"
   start_date: "2000-01-01"
   end_date: "2024-12-31"
-  target_horizon: 1
+  target_horizon: 1 # days ahead, for week use 5
   lookback_window: 60
   corr_window: 60
   corr_threshold: 0.4
