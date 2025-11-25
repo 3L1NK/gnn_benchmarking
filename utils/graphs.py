@@ -4,6 +4,47 @@ import networkx as nx
 from sklearn.covariance import GraphicalLasso
 from torch_geometric.utils import from_networkx
 
+from statsmodels.tsa.stattools import grangercausalitytests
+
+def granger_edges(panel_df, max_lag=2, p_threshold=0.05):
+    """
+    Build directed Granger causality edges.
+    panel_df must have columns: date, ticker, log_ret_1d.
+    """
+    df = panel_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+
+    # pivot to matrix shape [dates x tickers]
+    pivot = df.pivot(index="date", columns="ticker", values="log_ret_1d").dropna()
+
+    tickers = pivot.columns.tolist()
+    edges = []
+
+    for i in range(len(tickers)):
+        for j in range(len(tickers)):
+            if i == j:
+                continue
+
+            x = pivot[tickers[i]].values
+            y = pivot[tickers[j]].values
+
+            # A causes B means: past A helps predict B
+            data = np.column_stack([y, x])
+
+            try:
+                result = grangercausalitytests(data, maxlag=max_lag, verbose=False)
+            except:
+                continue
+
+            for lag in range(1, max_lag + 1):
+                p_val = result[lag][0]["ssr_ftest"][1]
+                if p_val < p_threshold:
+                    edges.append((tickers[i], tickers[j], float(1.0)))
+                    break
+
+    return edges
+
+
 def industry_edges(universe_df: pd.DataFrame):
     edges = []
     for industry, group in universe_df.groupby("industry"):
@@ -47,37 +88,43 @@ def rolling_corr_edges(panel_df, date, window, threshold):
     return edges
 
 def graphical_lasso_precision(
-    panel_df: pd.DataFrame,
+    returns_df: pd.DataFrame,
     start_date: str,
     end_date: str,
     alpha: float = 0.01,
 ):
     """
-    Fit Graphical Lasso on log returns between start_date and end_date.
-
-    Returns:
-      tickers: list of tickers in the model
-      precision: precision matrix as numpy array
-      edges: list of (ticker_i, ticker_j, weight_ij)
-      adj_dict: dict ticker -> list of (neighbor, weight)
+    Fit Graphical Lasso on log returns only.
+    returns_df must have columns: date, ticker, log_ret_1d
     """
-    df = panel_df.copy()
+
+    df = returns_df.copy()
     df["date"] = pd.to_datetime(df["date"])
+
     mask = (df["date"] >= pd.to_datetime(start_date)) & (df["date"] <= pd.to_datetime(end_date))
     df = df.loc[mask]
 
-    pivot = df.pivot(index="date", columns="ticker", values="log_ret_1d").dropna(axis=1, how="any")
-    if pivot.shape[1] < 3:
-        raise ValueError("Not enough tickers with full history for Graphical Lasso")
+    # pivot into matrix [dates × tickers]
+    pivot = df.pivot(index="date", columns="ticker", values="log_ret_1d")
 
+    # drop rows with NaN (not columns)
+    # this preserves max number of tickers
+    pivot = pivot.dropna(axis=0, how="any")
+
+    if pivot.shape[1] < 3:
+        raise ValueError("Not enough full-history tickers for Graphical Lasso")
+
+    # fit Graphical Lasso on covariance of returns
     model = GraphicalLasso(alpha=alpha, max_iter=200)
     model.fit(pivot.values)
+
     prec = model.precision_
     cols = pivot.columns.tolist()
 
     edges = []
     adj = {t: [] for t in cols}
 
+    # build undirected weighted graph from precision matrix
     for i in range(len(cols)):
         for j in range(i + 1, len(cols)):
             w = -prec[i, j]
