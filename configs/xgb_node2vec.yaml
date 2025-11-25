@@ -12,7 +12,8 @@ data:
 
 model:
   family: baseline
-  baseline_type: xgb_node2vec
+  type: xgb_node2vec
+  embedding_dim: 16
 
 training:
   test_start: "2020-01-01"
