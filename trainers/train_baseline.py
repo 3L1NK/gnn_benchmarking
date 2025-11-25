@@ -7,7 +7,7 @@ import pandas as pd
 
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
-from utils.graphs import rolling_corr_edges, graphical_lasso_precision
+from utils.graphs import rolling_corr_edges, graphical_lasso_precision, granger_edges
 from utils.metrics import mse, rank_ic, hit_rate
 from utils.backtest import backtest_long_short
 from utils.plot import plot_equity_curve
@@ -25,6 +25,8 @@ def train_baseline(config):
         train_graphlasso_linear(config)
     elif baseline_type == "graphlasso_xgb":
         train_graphlasso_xgb(config)
+    elif baseline_type == "granger_xgb":
+        train_granger_xgb(config)
     else:
         raise ValueError(f"Unknown baseline type {baseline_type}")
 
@@ -130,15 +132,25 @@ def train_xgb_raw(config):
     )
 
 def train_xgb_node2vec(config):
-    from torch_geometric.nn import Node2Vec
-    from xgboost import XGBRegressor
+    """
+    XGBoost baseline with Node2Vec embeddings using PyTorch Geometric.
+    This avoids nodevectors and avoids old networkx, so it is stable with numpy 2.
+    """
+
+    import torch
     import networkx as nx
+    import numpy as np
+    from xgboost import XGBRegressor
+    from torch_geometric.nn import Node2Vec
 
     set_seed(42)
 
+    # -------------------------------------------------
+    # 1. Load feature panel
+    # -------------------------------------------------
     df, feat_cols = _build_feature_panel(config)
+    df["date"] = pd.to_datetime(df["date"])
 
-    # build one global correlation graph on train period only
     val_start = pd.to_datetime(config["training"]["val_start"])
     train_df = df[df["date"] < val_start]
 
@@ -146,6 +158,9 @@ def train_xgb_node2vec(config):
     corr_window = config["data"]["lookback_window"]
     corr_thr = config["data"].get("corr_threshold", 0.4)
 
+    # -------------------------------------------------
+    # 2. Build correlation graph (train period only)
+    # -------------------------------------------------
     edges = rolling_corr_edges(
         train_df,
         last_train_date,
@@ -157,36 +172,70 @@ def train_xgb_node2vec(config):
     for u, v, w in edges:
         G.add_edge(u, v, weight=abs(w))
 
-    # Node2Vec on this graph
-    n2v = Node2Vec(
-        n_components=16,
-        walklen=40,
-        epochs=15,
-        return_weight=1.0,
-        neighbor_weight=1.0,
-        threads=4,
-    )
-    n2v.fit(G)
-    emb = {node: n2v.predict(node) for node in G.nodes()}
+    tickers = list(G.nodes())
+    ticker_to_idx = {t: i for i, t in enumerate(tickers)}
 
+    # PyG edge_index
+    if len(G.edges()) == 0:
+        raise ValueError("No edges in correlation graph. Increase corr_threshold or check data.")
+
+    edge_index = torch.tensor(
+        [[ticker_to_idx[u] for u, v in G.edges()],
+         [ticker_to_idx[v] for u, v in G.edges()]],
+        dtype=torch.long
+    )
+
+    # -------------------------------------------------
+    # 3. Train Node2Vec with PyTorch Geometric
+    # -------------------------------------------------
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    emb_dim = config["model"].get("embedding_dim", 16)
+    n2v = Node2Vec(
+        edge_index=edge_index,
+        embedding_dim=emb_dim,
+        walk_length=40,
+        context_size=20,
+        walks_per_node=10,
+        num_negative_samples=1,
+        sparse=True,
+    ).to(device)
+
+    loader = n2v.loader(batch_size=128, shuffle=True)
+    optimizer = torch.optim.SparseAdam(n2v.parameters(), lr=0.01)
+
+    for epoch in range(30):  # 30 epochs is enough
+        for pos_rw, neg_rw in loader:
+            optimizer.zero_grad()
+            loss = n2v.loss(pos_rw.to(device), neg_rw.to(device))
+            loss.backward()
+            optimizer.step()
+
+    # final embedding matrix
+    emb_matrix = n2v().detach().cpu().numpy()
+
+    # -------------------------------------------------
+    # 4. Build full dataset (features + embeddings)
+    # -------------------------------------------------
     rows = []
     for _, row in df.iterrows():
         t = row["ticker"]
-        if t not in emb:
-            continue
-        feat = row[feat_cols].values.astype(float)
-        vec = emb[t]
-        x = np.concatenate([feat, vec])
-        rows.append(
-            {
-                "date": row["date"],
-                "ticker": t,
-                "target": row["target"],
-                "features": x,
-            }
-        )
+        if t not in ticker_to_idx:
+            continue  # ticker missing from graph
+
+        f = row[feat_cols].values.astype(float)
+        vec = emb_matrix[ticker_to_idx[t]]
+        full_feat = np.concatenate([f, vec])
+
+        rows.append({
+            "date": row["date"],
+            "ticker": t,
+            "target": row["target"],
+            "features": full_feat,
+        })
 
     tab = pd.DataFrame(rows)
+
     X = np.stack(tab["features"].values)
     y = tab["target"].values.astype(float)
 
@@ -200,6 +249,9 @@ def train_xgb_node2vec(config):
     X_val, y_val = X[val_mask], y[val_mask]
     X_test, y_test = X[test_mask], y[test_mask]
 
+    # -------------------------------------------------
+    # 5. XGBoost on features + embeddings
+    # -------------------------------------------------
     model = XGBRegressor(
         n_estimators=600,
         learning_rate=0.05,
@@ -208,12 +260,15 @@ def train_xgb_node2vec(config):
         colsample_bytree=0.8,
         objective="reg:squarederror",
         tree_method="hist",
+        random_state=42,
     )
 
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
-
     preds_test = model.predict(X_test)
 
+    # -------------------------------------------------
+    # 6. Save predictions + backtest
+    # -------------------------------------------------
     out_dir = Path(config["evaluation"]["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -286,7 +341,6 @@ def _add_graph_smooth_features(df, feat_cols, adj_dict, alpha=0.5):
     df_out = pd.concat(out_frames, ignore_index=True)
     return df_out, smoothed_cols
 
-
 def train_graphlasso_linear(config):
     from sklearn.linear_model import Ridge
 
@@ -339,24 +393,127 @@ def train_graphlasso_linear(config):
     )
 
 def train_graphlasso_xgb(config):
-    from xgboost import XGBRegressor
+    """
+    Graphical Lasso + XGBoost baseline.
 
+    Steps:
+      1) Fit Graphical Lasso on log returns only.
+      2) Build adjacency graph.
+      3) Smooth technical features using neighbors.
+      4) Train XGBoost on [raw + smoothed] features.
+      5) Evaluate IC, hit, long-short.
+    """
+
+    from xgboost import XGBRegressor
     set_seed(42)
 
+    # -----------------------------
+    # 1. Load original price panel + features
+    # -----------------------------
     df, feat_cols = _build_feature_panel(config)
 
+    # -----------------------------
+    # 2. Prepare return-only DataFrame for GraphLasso
+    # -----------------------------
+    returns_df = df[["date", "ticker", "log_ret_1d"]].copy()
+
+    # -----------------------------
+    # 3. Fit Graphical Lasso using TRAIN period only
+    # -----------------------------
     val_start = config["training"]["val_start"]
     cols, prec, edges, adj = graphical_lasso_precision(
-        df,
+        returns_df,
         start_date=config["data"]["start_date"],
         end_date=val_start,
         alpha=config.get("graphlasso_alpha", 0.01),
     )
 
+    # -----------------------------
+    # 4. Smooth features using adjacency dictionary
+    # -----------------------------
     df_smooth, smooth_cols = _add_graph_smooth_features(df, feat_cols, adj, alpha=0.5)
 
+    # -----------------------------
+    # 5. Build feature matrix for XGB
+    # -----------------------------
     X = df_smooth[feat_cols + smooth_cols].values.astype(float)
     y = df_smooth["target"].values.astype(float)
+
+    train_mask, val_mask, test_mask = _time_masks(
+        df_smooth["date"],
+        config["training"]["val_start"],
+        config["training"]["test_start"],
+    )
+
+    X_train, y_train = X[train_mask], y[train_mask]
+    X_val, y_val = X[val_mask], y[val_mask]
+    X_test, y_test = X[test_mask], y[test_mask]
+
+    # -----------------------------
+    # 6. Train XGBoost
+    # -----------------------------
+    model = XGBRegressor(
+        n_estimators=600,
+        learning_rate=0.05,
+        max_depth=4,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="reg:squarederror",
+        tree_method="hist",
+        random_state=42,
+    )
+
+    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
+
+    preds_test = model.predict(X_test)
+
+    # -----------------------------
+    # 7. Save results
+    # -----------------------------
+    out_dir = Path(config["evaluation"]["out_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    df_test = df_smooth.loc[test_mask, ["date", "ticker"]].copy()
+    df_test["pred"] = preds_test
+    df_test["realized_ret"] = y_test
+    df_test.to_csv(out_dir / "graphlasso_xgb_predictions.csv", index=False)
+
+    # -----------------------------
+    # 8. Evaluate + backtest
+    # -----------------------------
+    _evaluate_and_backtest(
+        df_test,
+        out_dir,
+        name="graphlasso_xgb",
+        config=config,
+    )
+    
+def train_granger_xgb(config):
+    from xgboost import XGBRegressor
+    set_seed(42)
+
+    # load features
+    df, feat_cols = _build_feature_panel(config)
+
+    # build returns panel
+    returns_df = df[["date", "ticker", "log_ret_1d"]].copy()
+
+    # get granger edges using only train period
+    val_start = config["training"]["val_start"]
+    mask = returns_df["date"] < pd.to_datetime(val_start)
+    edges = granger_edges(returns_df.loc[mask], max_lag=2, p_threshold=0.05)
+
+    # build adjacency dict
+    adj = {}
+    for u, v, w in edges:
+        adj.setdefault(u, []).append((v, w))
+        adj.setdefault(v, [])  # ensure existence
+
+    # smooth features
+    df_smooth, smooth_cols = _add_graph_smooth_features(df, feat_cols, adj, alpha=0.5)
+
+    X = df_smooth[feat_cols + smooth_cols].values
+    y = df_smooth["target"].values
 
     train_mask, val_mask, test_mask = _time_masks(
         df_smooth["date"],
@@ -376,26 +533,29 @@ def train_graphlasso_xgb(config):
         colsample_bytree=0.8,
         objective="reg:squarederror",
         tree_method="hist",
+        random_state=42,
     )
 
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
 
     preds_test = model.predict(X_test)
 
+    # save results
     out_dir = Path(config["evaluation"]["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
     df_test = df_smooth.loc[test_mask, ["date", "ticker"]].copy()
     df_test["pred"] = preds_test
     df_test["realized_ret"] = y_test
-    df_test.to_csv(out_dir / "graphlasso_xgb_predictions.csv", index=False)
+    df_test.to_csv(out_dir / "granger_xgb_predictions.csv", index=False)
 
     _evaluate_and_backtest(
         df_test,
         out_dir,
-        name="graphlasso_xgb",
+        name="granger_xgb",
         config=config,
     )
+
 
 def _evaluate_and_backtest(pred_df, out_dir: Path, name: str, config):
     # day level IC and hit rate
