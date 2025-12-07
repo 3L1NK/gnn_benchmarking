@@ -2,20 +2,21 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller, kpss
 
+
 def adf_test(series):
     """
-    Perform the Augmented Dickey Fuller test on a time series.
+    Run the Augmented Dickey Fuller stationarity test.
 
     Parameters
     ----------
     series : pandas.Series
-        The time series to test. Missing values are removed.
+        Time series to test. Missing values are removed.
 
     Returns
     -------
     float or None
-        The p value of the ADF test. Lower values (below 0.05) indicate stationarity.
-        Returns None if the series is too short.
+        P value of the ADF test. A value below 0.05 suggests stationarity.
+        Returns None if the series is too short to test.
     """
     series = series.dropna()
     if len(series) < 20:
@@ -23,20 +24,21 @@ def adf_test(series):
     stat, pvalue, *_ = adfuller(series, autolag="AIC")
     return pvalue
 
+
 def kpss_test(series):
     """
-    Perform the KPSS test on a time series.
+    Run the KPSS stationarity test.
 
     Parameters
     ----------
     series : pandas.Series
-        The time series to test. Missing values are removed.
+        Time series to test. Missing values are removed.
 
     Returns
     -------
     float or None
-        The p value of the KPSS test. Higher values (above 0.05) indicate stationarity.
-        Returns None if the series is too short.
+        P value of the KPSS test. A value above 0.05 suggests stationarity.
+        Returns None if the series is too short to test.
     """
     series = series.dropna()
     if len(series) < 20:
@@ -47,19 +49,19 @@ def kpss_test(series):
 
 def rsi_stationary(returns, window=14):
     """
-    Compute a stationary version of the RSI indicator using returns instead of prices.
+    Compute RSI using returns to improve stationarity.
 
     Parameters
     ----------
     returns : pandas.Series
-        Daily return values used to compute RSI.
+        Daily returns used to compute RSI.
     window : int, optional
-        Rolling window size for averaging gains and losses.
+        Rolling window length for averaging gains and losses.
 
     Returns
     -------
     pandas.Series
-        The RSI values based on returns. This version avoids non stationary price inputs.
+        Stationary RSI values between 0 and 100.
     """
     delta = returns
     gain = delta.clip(lower=0).rolling(window).mean()
@@ -69,28 +71,27 @@ def rsi_stationary(returns, window=14):
     return rsi
 
 
-
 def macd_stationary(returns, fast=12, slow=26, signal=9):
     """
-    Compute a stationary MACD indicator using returns instead of prices.
+    Compute MACD, signal line and histogram using returns instead of prices.
 
     Parameters
     ----------
     returns : pandas.Series
-        Daily returns used to build MACD.
+        Daily returns used as input for EMAs.
     fast : int, optional
         Span for the fast EMA.
     slow : int, optional
         Span for the slow EMA.
     signal : int, optional
-        Span for the signal line EMA.
+        Span for the signal EMA.
 
     Returns
     -------
     tuple of pandas.Series
-        macd_line : EMA fast minus EMA slow.
+        macd_line : Difference between fast and slow EMA of returns.
         signal_line : Smoothed version of the MACD line.
-        hist : Difference between MACD and signal line.
+        hist : MACD histogram which is macd_line minus signal_line.
     """
     ema_fast = returns.ewm(span=fast, adjust=False).mean()
     ema_slow = returns.ewm(span=slow, adjust=False).mean()
@@ -100,30 +101,35 @@ def macd_stationary(returns, fast=12, slow=26, signal=9):
     return macd_line, signal_line, hist
 
 
-
-def add_technical_features(df, id_col="ticker", date_col="date", price_col="close", vol_col="volume"):
+def add_technical_features(
+    df,
+    id_col="ticker",
+    date_col="date",
+    price_col="close",
+    vol_col="volume"
+):
     """
-    Add stationary technical features for each asset in a panel dataset.
+    Compute stationary technical features for each asset in a panel dataset.
 
     Parameters
     ----------
     df : pandas.DataFrame
-        Input data containing at least ticker, date, close price and volume.
+        Input dataframe with at least ticker, date, close price and volume.
     id_col : str, optional
-        Column name that identifies each asset.
+        Column name identifying each asset.
     date_col : str, optional
-        Column name for the date field. The data must be sortable by this column.
+        Column name for the timestamp.
     price_col : str, optional
-        Column name for the close price.
+        Column name with close prices.
     vol_col : str, optional
-        Column name for trade volume.
+        Column name with trading volume.
 
     Returns
     -------
-    df : pandas.DataFrame
-        The input dataframe with added stationary features.
-    feature_cols : list of str
-        Names of all generated feature columns. These can be used for ML models.
+    pandas.DataFrame
+        Dataframe with added features. Rows with NaN created by rolling windows are removed.
+    list of str
+        List of names of the feature columns added to the dataframe.
     """
     df = df.sort_values([id_col, date_col]).copy()
 
@@ -135,42 +141,49 @@ def add_technical_features(df, id_col="ticker", date_col="date", price_col="clos
         g["ret_1d"] = p.pct_change()
         g["ret_5d"] = p.pct_change(5)
         g["ret_20d"] = p.pct_change(20)
-        g["log_ret_1d"] = np.log(p / p.shift(1))
+        g["log_ret_1d"] = np.log(p / p.shift(1)).replace([np.inf, -np.inf], np.nan)
 
-        # volatility of returns
-        g["vol_20d"] = g["log_ret_1d"].rolling(20).std()
-
-        # momentum (already stationary)
+        # momentum
+        g["mom_3d"] = p.pct_change(3)
         g["mom_10"] = p.pct_change(10)
+        g["mom_21d"] = p.pct_change(21)
+
+        # volatility
+        g["vol_5d"] = g["log_ret_1d"].rolling(5).std()
+        g["vol_20d"] = g["log_ret_1d"].rolling(20).std()
+        g["vol_60d"] = g["log_ret_1d"].rolling(60).std()
+
+        # drawdown
+        rolling_max = p.rolling(20).max()
+        g["drawdown_20d"] = (p / rolling_max) - 1
+
+        # volume features
+        g["volume_pct_change"] = v.pct_change()
+        g["vol_z_20"] = (v - v.rolling(20).mean()) / (v.rolling(20).std() + 1e-8)
+        g["vol_z_5"] = (v - v.rolling(5).mean()) / (v.rolling(5).std() + 1e-8)
 
         # stationary RSI
         g["rsi_14"] = rsi_stationary(g["ret_1d"], window=14)
 
-        # stationary MACD on returns
+        # stationary MACD
         macd_line, sig, hist = macd_stationary(g["ret_1d"])
         g["macd_line"] = macd_line
         g["macd_signal"] = sig
         g["macd_hist"] = hist
 
-        # volume z score
-        g["vol_z_20"] = (v - v.rolling(20).mean()) / (v.rolling(20).std() + 1e-8)
-
         return g
 
     df = df.groupby(id_col, group_keys=False).apply(_per_asset)
 
+    df = df.dropna().reset_index(drop=True)
+
     feature_cols = [
-        "ret_1d",
-        "ret_5d",
-        "ret_20d",
-        "log_ret_1d",
-        "vol_20d",
-        "mom_10",
-        "rsi_14",
-        "macd_line",
-        "macd_signal",
-        "macd_hist",
-        "vol_z_20",
+        "ret_1d", "ret_5d", "ret_20d", "log_ret_1d",
+        "mom_3d", "mom_10", "mom_21d",
+        "vol_5d", "vol_20d", "vol_60d",
+        "drawdown_20d",
+        "volume_pct_change", "vol_z_5", "vol_z_20",
+        "rsi_14", "macd_line", "macd_signal", "macd_hist"
     ]
 
     return df, feature_cols
@@ -178,28 +191,31 @@ def add_technical_features(df, id_col="ticker", date_col="date", price_col="clos
 
 def test_all_features(df, feature_cols, id_col="ticker"):
     """
-    Apply ADF and KPSS stationarity tests to all features and all tickers.
+    Run ADF and KPSS stationarity tests for each feature and each asset.
 
     Parameters
     ----------
     df : pandas.DataFrame
-        Dataframe containing the computed features.
+        Dataframe that contains the computed feature columns.
     feature_cols : list of str
         Names of feature columns to test.
     id_col : str, optional
-        Column name identifying the asset.
+        Column name identifying each asset.
 
     Returns
     -------
     pandas.DataFrame
-        A table with one row per ticker and feature showing ADF and KPSS p values.
-        This helps identify features that are not stationary.
+        Table with ticker, feature name, ADF p value and KPSS p value.
+        Helps identify which features may need transformation.
     """
-
     results = []
     for ticker, g in df.groupby(id_col):
         for col in feature_cols:
             adf_p = adf_test(g[col])
             kpss_p = kpss_test(g[col])
             results.append([ticker, col, adf_p, kpss_p])
-    return pd.DataFrame(results, columns=["ticker", "feature", "adf_p", "kpss_p"])
+
+    return pd.DataFrame(
+        results,
+        columns=["ticker", "feature", "adf_p", "kpss_p"]
+    )

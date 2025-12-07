@@ -2,7 +2,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-from utils.features import add_technical_features
+from features import add_technical_features, test_all_features
+
 
 
 def load_raw_file():
@@ -67,16 +68,25 @@ def main():
 
     print("Feature columns:", feat_cols)
 
-    # ensure sorting
-    df = df.sort_values(["date", "ticker"]).reset_index(drop=True)
+    # Step 3. Stationarity test
+    print("Step 3. Running stationarity tests")
+    stationarity = test_all_features(df, feat_cols)
+    print(stationarity.head())
 
+    out_stats = Path("data/processed/stationarity_results.csv")
+    stationarity.to_csv(out_stats, index=False)
+    print("Stationarity results saved to:", out_stats)
+
+    # Step 4. Save processed dataset
+    df = df.sort_values(["date", "ticker"]).reset_index(drop=True)
     out_path = Path("data/processed/prices.parquet")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print("Step 3. Saving processed dataset to:", out_path)
+    print("Step 4. Saving processed dataset to:", out_path)
     df.to_parquet(out_path)
 
     print("Done. Final processed dataset saved.")
+
 
 
 if __name__ == "__main__":
