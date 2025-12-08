@@ -8,7 +8,7 @@ import pandas as pd
 from utils.data_loading import load_price_panel
 from utils.graphs import rolling_corr_edges, graphical_lasso_precision, granger_edges
 from utils.metrics import rank_ic, hit_rate
-from utils.backtest import backtest_long_short
+from utils.backtest import backtest_long_short, backtest_buy_and_hold, backtest_long_only
 from utils.plot import plot_equity_curve
 from utils.seeds import set_seed
 
@@ -33,9 +33,41 @@ class XGBoostTrainer:
     def run(self):
         key = self.config["model"]["type"].lower()
         try:
-            return self._registry[key]()
+            result = self._registry[key]()    # train the chosen XGB variant
         except KeyError:
             raise ValueError(f"Unknown xgboost type {key}")
+
+        # run buy and hold baseline on the same test period
+        self.run_buy_and_hold()
+
+        return result
+        
+    def run_buy_and_hold(self):
+        """
+        Equal weight buy and hold baseline on the same test period.
+        Uses log_ret_1d from the feature panel.
+        """
+
+        test_start = pd.to_datetime(self.config["training"]["test_start"])
+        end_date = pd.to_datetime(self.config["data"]["end_date"])
+
+        # slice test period
+        df_test = self.df[
+            (self.df["date"] >= test_start) & (self.df["date"] <= end_date)
+        ].copy()
+
+        # we only need date, ticker, log_ret_1d
+        price_panel = df_test[["date", "ticker", "log_ret_1d"]].copy()
+
+        eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
+            price_panel,
+            risk_free_rate=self.config["evaluation"]["risk_free_rate"],
+        )
+
+        # save curve
+        eq_bh.to_csv(self.out_dir / "buy_and_hold_equity_curve.csv", header=["value"])
+
+        print("[buy_and_hold] stats", stats_bh)
 
     def train_xgb_raw(self):
         """Plain XGBoost model: predict next day returns using only technical features."""
@@ -386,7 +418,7 @@ class XGBoostTrainer:
             daily_metrics["hit"].mean(),
         )
 
-        equity_curve, daily_ret, stats = backtest_long_short(
+        equity_curve, daily_ret, stats = backtest_long_only(
             pred_df,
             top_k=self.config["evaluation"]["top_k"],
             transaction_cost_bps=self.config["evaluation"]["transaction_cost_bps"],
