@@ -11,7 +11,7 @@ data:
   corr_threshold: 0.4
 
 model:
-  family: baseline
+  family: xgboost
   type: xgb_node2vec
   embedding_dim: 16
 

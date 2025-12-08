@@ -1,4 +1,4 @@
-# trainers/train_baseline.py
+# trainers/train_xgboost.py
 
 from pathlib import Path
 
@@ -14,21 +14,22 @@ from utils.plot import plot_equity_curve
 from utils.seeds import set_seed
 
 
-def train_baseline(config):
-    baseline_type = config["model"]["type"].lower()
+def train_xgboost(config):
+    """Dispatch XGBoost-based models."""
+    xgboost_type = config["model"]["type"].lower()
 
-    if baseline_type == "xgb_raw":
+    if xgboost_type == "xgb_raw":
         train_xgb_raw(config)
-    elif baseline_type == "xgb_node2vec":
+    elif xgboost_type == "xgb_node2vec":
         train_xgb_node2vec(config)
-    elif baseline_type == "graphlasso_linear":
+    elif xgboost_type == "graphlasso_linear":
         train_graphlasso_linear(config)
-    elif baseline_type == "graphlasso_xgb":
+    elif xgboost_type == "graphlasso_xgb":
         train_graphlasso_xgb(config)
-    elif baseline_type == "granger_xgb":
+    elif xgboost_type == "granger_xgb":
         train_granger_xgb(config)
     else:
-        raise ValueError(f"Unknown baseline type {baseline_type}")
+        raise ValueError(f"Unknown xgboost type {xgboost_type}")
 
 def _build_feature_panel(config):
     """Shared helper. Returns df with features and target, list of feature columns."""
@@ -57,7 +58,7 @@ def _time_masks(dates, val_start, test_start):
 
 def train_xgb_raw(config):
     """
-    Plain XGBoost baseline:
+    Plain XGBoost model:
     Predict next day returns using only per asset technical features.
     """
 
@@ -133,7 +134,7 @@ def train_xgb_raw(config):
 
 def train_xgb_node2vec(config):
     """
-    XGBoost baseline with Node2Vec embeddings using PyTorch Geometric.
+    XGBoost model with Node2Vec embeddings using PyTorch Geometric.
     This avoids nodevectors and avoids old networkx, so it is stable with numpy 2.
     """
 
@@ -394,7 +395,7 @@ def train_graphlasso_linear(config):
 
 def train_graphlasso_xgb(config):
     """
-    Graphical Lasso + XGBoost baseline.
+    Graphical Lasso + XGBoost model.
 
     Steps:
       1) Fit Graphical Lasso on log returns only.

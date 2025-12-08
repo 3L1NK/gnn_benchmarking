@@ -8,7 +8,7 @@ data:
   lookback_window: 60
 
 model:
-  family: baseline
+  family: xgboost
   type: xgb_raw
 
 training:
