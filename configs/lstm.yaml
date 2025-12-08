@@ -33,3 +33,13 @@ evaluation:
   transaction_cost_bps: 5
   risk_free_rate: 0.0
   out_dir: "experiments/lstm_baseline"
+
+tuning:
+  enabled: true
+  hidden_dim: [32, 64]
+  num_layers: [1, 2]
+  dropout: [0.0, 0.1]
+  lr: [0.0005, 0.001]
+  max_epochs: 10
+  patience: 3
+
