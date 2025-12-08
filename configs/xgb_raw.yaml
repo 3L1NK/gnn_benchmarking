@@ -7,9 +7,20 @@ data:
   target_horizon: 1
   lookback_window: 60
 
+tuning:
+    enabled: false
+
 model:
   family: xgboost
   type: xgb_raw
+
+  params:
+    max_depth: 3
+    learning_rate: 0.01
+    n_estimators: 300
+    subsample: 0.7
+    colsample_bytree: 0.7
+    reg_lambda: 1.0
 
 training:
   val_start: "2016-01-01"

@@ -1,16 +1,133 @@
 # trainers/train_xgboost.py
-
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from utils.data_loading import load_price_panel
+from utils.features import add_technical_features
 from utils.graphs import rolling_corr_edges, graphical_lasso_precision, granger_edges
 from utils.metrics import rank_ic, hit_rate
 from utils.backtest import backtest_long_short, backtest_buy_and_hold, backtest_long_only
-from utils.plot import plot_equity_curve
+from utils.plot import (
+    plot_equity_curve,
+    plot_daily_ic,
+    plot_ic_hist,
+    plot_equity_comparison,
+)
 from utils.seeds import set_seed
+from xgboost import XGBRegressor
+from itertools import product
+from sklearn.metrics import root_mean_squared_error
+
+
+def _build_feature_panel(config):
+    """Shared helper. Returns df with features and target, list of feature columns.
+
+    Features are assumed to be precomputed in the parquet produced by preprocessing.
+    """
+    default_feat_cols = [
+        "ret_1d", "ret_5d", "ret_20d", "log_ret_1d",
+        "mom_3d", "mom_10", "mom_21d",
+        "vol_5d", "vol_20d", "vol_60d",
+        "drawdown_20d",
+        "volume_pct_change", "vol_z_5", "vol_z_20",
+        "rsi_14", "macd_line", "macd_signal", "macd_hist",
+    ]
+    price_file = config["data"]["price_file"]
+    start = config["data"]["start_date"]
+    end = config["data"]["end_date"]
+    horizon = config["data"]["target_horizon"]
+
+    df = load_price_panel(price_file, start, end)
+    feat_cols = [c for c in default_feat_cols if c in df.columns]
+
+    # Fallback: if the parquet is raw prices without features, compute them here.
+    if not feat_cols:
+        df, feat_cols = add_technical_features(df)
+        feat_cols = [c for c in default_feat_cols if c in df.columns]
+
+    df["target"] = df.groupby("ticker")["log_ret_1d"].shift(-horizon)
+    df = df.dropna(subset=["target"])
+
+    return df, feat_cols
+
+def _time_masks(dates, val_start, test_start):
+    """
+    Docstring for _time_masks
+    
+    it transforms dates into pd.Timestamp and creates boolean masks for train, validation, and test sets based on the provided start dates.
+    
+    :param dates: dates from the price.parquet DataFrame
+    :param val_start: when the validation period starts
+    :param test_start: when the test period starts
+    :return: train_mask, val_mask, test_mask
+    """
+    dates = pd.to_datetime(dates)
+    val_start = pd.to_datetime(val_start)
+    test_start = pd.to_datetime(test_start)
+    train_mask = dates < val_start
+    val_mask = (dates >= val_start) & (dates < test_start)
+    test_mask = dates >= test_start
+    return train_mask, val_mask, test_mask
+
+def _add_graph_smooth_features(df, feat_cols, adj_dict, alpha=0.5):
+    """
+    for granger or graphical lasso adjacency
+    For each ticker and date:
+      new_feat = alpha * own + (1 - alpha) * neighbor weighted average
+
+    Returns df with extra columns for smoothed features.
+    """
+    df = df.sort_values(["ticker", "date"]).copy()
+    smoothed_cols = []
+
+    for col in feat_cols:
+        new_col = col + "_smooth"
+        smoothed_cols.append(new_col)
+        df[new_col] = df[col]
+
+    by_date = dict(tuple(df.groupby("date", sort=False)))
+
+    out_frames = []
+    for date, g in by_date.items():
+        g = g.copy()
+        ticker_to_idx = {t: i for i, t in enumerate(g["ticker"])}
+        for idx, row in g.iterrows():
+            t = row["ticker"]
+            if t not in adj_dict:
+                continue
+            neighbors = adj_dict[t]
+            if not neighbors:
+                continue
+
+            weights = []
+            neigh_feat = {c: [] for c in feat_cols}
+
+            for nb, w in neighbors:
+                if nb not in ticker_to_idx:
+                    continue
+                nb_row = g.iloc[ticker_to_idx[nb]]
+                weights.append(abs(w))
+                for c in feat_cols:
+                    neigh_feat[c].append(nb_row[c])
+
+            if not weights:
+                continue
+            w_arr = np.array(weights)
+            w_arr = w_arr / (w_arr.sum() + 1e-8)
+
+            for c in feat_cols:
+                neigh_vals = np.array(neigh_feat[c])
+                neigh_mean = (w_arr * neigh_vals).sum()
+                new_val = alpha * row[c] + (1 - alpha) * neigh_mean
+                g.at[idx, c + "_smooth"] = new_val
+
+        out_frames.append(g)
+
+    df_out = pd.concat(out_frames, ignore_index=True)
+    return df_out, smoothed_cols
+
 
 
 class XGBoostTrainer:
@@ -32,17 +149,18 @@ class XGBoostTrainer:
 
     def run(self):
         key = self.config["model"]["type"].lower()
+
+        # compute buy and hold first so it is available for comparison
+        self.bh_curve = self.run_buy_and_hold()
+
         try:
-            result = self._registry[key]()    # train the chosen XGB variant
+            result = self._registry[key]()   # train the chosen XGB variant
         except KeyError:
             raise ValueError(f"Unknown xgboost type {key}")
 
-        # run buy and hold baseline on the same test period
-        self.run_buy_and_hold()
-
         return result
-        
-    def run_buy_and_hold(self):
+
+    def run_buy_and_hold(self) -> pd.Series:
         """
         Equal weight buy and hold baseline on the same test period.
         Uses log_ret_1d from the feature panel.
@@ -68,13 +186,66 @@ class XGBoostTrainer:
         eq_bh.to_csv(self.out_dir / "buy_and_hold_equity_curve.csv", header=["value"])
 
         print("[buy_and_hold] stats", stats_bh)
+        
+        return eq_bh
 
+    def _evaluate_and_backtest(self, pred_df, name: str):
+        daily_metrics = []
+        for d, g in pred_df.groupby("date"):
+            ic = rank_ic(g["pred"], g["realized_ret"])
+            hit = hit_rate(g["pred"], g["realized_ret"], top_k=self.config["evaluation"]["top_k"])
+            daily_metrics.append({"date": d, "ic": ic, "hit": hit})
+
+        daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
+        daily_metrics.to_csv(self.out_dir / f"{name}_daily_metrics.csv", index=False)
+        
+        # IC time series plot
+        plot_daily_ic(
+            daily_metrics,
+            self.out_dir / f"{name}_ic_timeseries.png"
+        )
+
+        # IC histogram
+        plot_ic_hist(
+            daily_metrics,
+            self.out_dir / f"{name}_ic_histogram.png"
+        )
+
+        print(
+            f"[{name}] mean IC",
+            daily_metrics["ic"].mean(),
+            "mean hit",
+            daily_metrics["hit"].mean(),
+        )
+
+        equity_curve, daily_ret, stats = backtest_long_only(
+            pred_df,
+            top_k=self.config["evaluation"]["top_k"],
+            transaction_cost_bps=self.config["evaluation"]["transaction_cost_bps"],
+            risk_free_rate=self.config["evaluation"]["risk_free_rate"],
+        )
+        equity_curve.to_csv(self.out_dir / f"{name}_equity_curve.csv", header=["value"])
+        plot_equity_curve(
+            equity_curve,
+            f"{name} long only",
+            self.out_dir / f"{name}_equity_curve.png",
+        )
+        print(f"[{name}] backtest stats", stats)
+        
+        plot_equity_comparison(
+            model_curve=equity_curve,
+            bh_curve=self.bh_curve,     # store it inside trainer
+            title=f"{name}: Model vs Buy & Hold",
+            out_path=self.out_dir / f"{name}_vs_buy_and_hold.png",
+        )
+    
+    
     def train_xgb_raw(self):
-        """Plain XGBoost model: predict next day returns using only technical features."""
-        from xgboost import XGBRegressor
-
         set_seed(42)
 
+        # -----------------------
+        # 1. Split data
+        # -----------------------
         train_mask, val_mask, test_mask = _time_masks(
             self.df["date"],
             self.config["training"]["val_start"],
@@ -85,36 +256,95 @@ class XGBoostTrainer:
         y = self.df["target"].values.astype(float)
 
         X_train, y_train = X[train_mask], y[train_mask]
-        X_val, y_val = X[val_mask], y[val_mask]
-        X_test, y_test = X[test_mask], y[test_mask]
+        X_val,   y_val   = X[val_mask],   y[val_mask]
+        X_test,  y_test  = X[test_mask],  y[test_mask]
 
-        model = XGBRegressor(
-            n_estimators=500,
-            learning_rate=0.05,
-            max_depth=4,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            objective="reg:squarederror",
-            tree_method="hist",
-            random_state=42,
-        )
+        # -----------------------
+        # 2. Read config
+        # -----------------------
+        model_cfg = self.config["model"]
+        use_tuning = self.config["tuning"]["enabled"]
+        print("XGB tuning enabled:", use_tuning)
+        fixed_params = model_cfg.get("params", {})
+
+        # -----------------------
+        # 3. Model builder
+        # -----------------------
+        def make_model(params):
+            return XGBRegressor(
+                objective="reg:squarederror",
+                tree_method="hist",
+                random_state=42,
+                **params,
+            )
+
+        # -----------------------
+        # 4. Hyperparameter logic
+        # -----------------------
+        if use_tuning:
+            print("Starting XGB hyperparameter search")
+
+            param_grid = {
+                "max_depth":        [3, 4],
+                "learning_rate":    [0.01, 0.03, 0.05],
+                "n_estimators":     [300, 600],
+                "subsample":        [0.7, 0.9],
+                "colsample_bytree": [0.7, 0.9],
+                "reg_lambda":       [0.0, 1.0],
+            }
+
+            best_params = None
+            best_rmse = float("inf")
+
+            for values in product(*param_grid.values()):
+                params = dict(zip(param_grid.keys(), values))
+
+                model = make_model(params)
+                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+
+                preds = model.predict(X_val)
+                rmse = root_mean_squared_error(y_val, preds)
+
+                print("Params", params, "RMSE", rmse)
+
+                if rmse < best_rmse:
+                    best_rmse = rmse
+                    best_params = params
+
+            print("Best parameters:", best_params)
+
+        else:
+            print("Using fixed XGB parameters from YAML")
+            best_params = fixed_params
+
+        # -----------------------
+        # 5. Train final model
+        # -----------------------
+        X_train_full = np.concatenate([X_train, X_val])
+        y_train_full = np.concatenate([y_train, y_val])
+
+        model = make_model(best_params)
 
         model.fit(
-            X_train,
-            y_train,
+            X_train_full,
+            y_train_full,
             eval_set=[(X_val, y_val)],
-            early_stopping_rounds=50,
             verbose=50,
         )
 
         preds_test = model.predict(X_test)
 
+        # -----------------------
+        # 6. Output + backtest
+        # -----------------------
         df_test = self.df.loc[test_mask, ["date", "ticker"]].copy()
         df_test["pred"] = preds_test
         df_test["realized_ret"] = y_test
         df_test.to_csv(self.out_dir / "xgb_raw_predictions.csv", index=False)
 
         self._evaluate_and_backtest(df_test, name="xgb_raw")
+
+
 
     def train_xgb_node2vec(self):
         """
@@ -401,36 +631,7 @@ class XGBoostTrainer:
             name="granger_xgb",
         )
 
-    def _evaluate_and_backtest(self, pred_df, name: str):
-        daily_metrics = []
-        for d, g in pred_df.groupby("date"):
-            ic = rank_ic(g["pred"], g["realized_ret"])
-            hit = hit_rate(g["pred"], g["realized_ret"], top_k=self.config["evaluation"]["top_k"])
-            daily_metrics.append({"date": d, "ic": ic, "hit": hit})
-
-        daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
-        daily_metrics.to_csv(self.out_dir / f"{name}_daily_metrics.csv", index=False)
-
-        print(
-            f"[{name}] mean IC",
-            daily_metrics["ic"].mean(),
-            "mean hit",
-            daily_metrics["hit"].mean(),
-        )
-
-        equity_curve, daily_ret, stats = backtest_long_only(
-            pred_df,
-            top_k=self.config["evaluation"]["top_k"],
-            transaction_cost_bps=self.config["evaluation"]["transaction_cost_bps"],
-            risk_free_rate=self.config["evaluation"]["risk_free_rate"],
-        )
-        equity_curve.to_csv(self.out_dir / f"{name}_equity_curve.csv", header=["value"])
-        plot_equity_curve(
-            equity_curve,
-            f"{name} long short",
-            self.out_dir / f"{name}_equity_curve.png",
-        )
-        print(f"[{name}] backtest stats", stats)
+    
 
 
 def train_xgboost(config):
@@ -439,95 +640,3 @@ def train_xgboost(config):
     trainer.run()
 
 
-def _build_feature_panel(config):
-    """Shared helper. Returns df with features and target, list of feature columns.
-
-    Features are assumed to be precomputed in the parquet produced by preprocessing.
-    """
-    default_feat_cols = [
-        "ret_1d", "ret_5d", "ret_20d", "log_ret_1d",
-        "mom_3d", "mom_10", "mom_21d",
-        "vol_5d", "vol_20d", "vol_60d",
-        "drawdown_20d",
-        "volume_pct_change", "vol_z_5", "vol_z_20",
-        "rsi_14", "macd_line", "macd_signal", "macd_hist",
-    ]
-    price_file = config["data"]["price_file"]
-    start = config["data"]["start_date"]
-    end = config["data"]["end_date"]
-    horizon = config["data"]["target_horizon"]
-
-    df = load_price_panel(price_file, start, end)
-    feat_cols = [c for c in default_feat_cols if c in df.columns]
-
-    df["target"] = df.groupby("ticker")["log_ret_1d"].shift(-horizon)
-    df = df.dropna(subset=["target"])
-
-    return df, feat_cols
-
-
-def _time_masks(dates, val_start, test_start):
-    dates = pd.to_datetime(dates)
-    val_start = pd.to_datetime(val_start)
-    test_start = pd.to_datetime(test_start)
-    train_mask = dates < val_start
-    val_mask = (dates >= val_start) & (dates < test_start)
-    test_mask = dates >= test_start
-    return train_mask, val_mask, test_mask
-
-
-def _add_graph_smooth_features(df, feat_cols, adj_dict, alpha=0.5):
-    """
-    For each ticker and date:
-      new_feat = alpha * own + (1 - alpha) * neighbor weighted average
-
-    Returns df with extra columns for smoothed features.
-    """
-    df = df.sort_values(["ticker", "date"]).copy()
-    smoothed_cols = []
-
-    for col in feat_cols:
-        new_col = col + "_smooth"
-        smoothed_cols.append(new_col)
-        df[new_col] = df[col]
-
-    by_date = dict(tuple(df.groupby("date", sort=False)))
-
-    out_frames = []
-    for date, g in by_date.items():
-        g = g.copy()
-        ticker_to_idx = {t: i for i, t in enumerate(g["ticker"])}
-        for idx, row in g.iterrows():
-            t = row["ticker"]
-            if t not in adj_dict:
-                continue
-            neighbors = adj_dict[t]
-            if not neighbors:
-                continue
-
-            weights = []
-            neigh_feat = {c: [] for c in feat_cols}
-
-            for nb, w in neighbors:
-                if nb not in ticker_to_idx:
-                    continue
-                nb_row = g.iloc[ticker_to_idx[nb]]
-                weights.append(abs(w))
-                for c in feat_cols:
-                    neigh_feat[c].append(nb_row[c])
-
-            if not weights:
-                continue
-            w_arr = np.array(weights)
-            w_arr = w_arr / (w_arr.sum() + 1e-8)
-
-            for c in feat_cols:
-                neigh_vals = np.array(neigh_feat[c])
-                neigh_mean = (w_arr * neigh_vals).sum()
-                new_val = alpha * row[c] + (1 - alpha) * neigh_mean
-                g.at[idx, c + "_smooth"] = new_val
-
-        out_frames.append(g)
-
-    df_out = pd.concat(out_frames, ignore_index=True)
-    return df_out, smoothed_cols
