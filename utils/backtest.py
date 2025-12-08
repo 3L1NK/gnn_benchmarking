@@ -1,118 +1,43 @@
-# utils/backtest.py
-
 import pandas as pd
 import numpy as np
 from .metrics import sharpe_ratio, sortino_ratio
 
-
-def backtest_long_short(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate=0.0):
+def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
     """
-    Market neutral long short portfolio.
-
-    Input:
-        pred_df: DataFrame with columns [date, ticker, pred, realized_ret]
-        top_k: number of long and short positions per day
-        transaction_cost_bps: cost in basis points per unit of turnover
-        risk_free_rate: daily risk free rate used in Sharpe and Sortino
-
-    Logic:
-        - each day sort by pred
-        - go long top_k, short bottom_k
-        - equal weights on long and short side
-        - daily rebalancing with transaction costs based on turnover
+    price_panel has columns: date, ticker, log_ret_1d (or some daily return).
+    Equal weight in all tickers at start, never rebalance.
     """
-    df = pred_df.copy()
+
+    df = price_panel.copy()
     df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values(["date", "pred"], ascending=[True, False])
 
-    dates = df["date"].drop_duplicates().sort_values().tolist()
+    # pivot returns to matrix [dates, tickers]
+    ret_mat = df.pivot(index="date", columns="ticker", values="log_ret_1d").sort_index()
+    ret_mat = ret_mat.fillna(0.0).values  # shape [T, N]
 
-    equity = 1.0
-    equity_curve = []
-    daily_returns = []
-    daily_turnover = []
+    n_assets = ret_mat.shape[1]
+    w = np.ones(n_assets) / n_assets
 
-    prev_weights = {}
+    port_ret = ret_mat.dot(w)  # shape [T]
+    equity = (1 + port_ret).cumprod()
 
-    for d in dates:
-        day_df = df[df["date"] == d]
-        if day_df.empty:
-            continue
-
-        day_df = day_df.sort_values("pred", ascending=False)
-
-        long = day_df.head(top_k)
-        short = day_df.tail(top_k)
-
-        # equal weighting on both legs
-        w_long = 0.5 / max(len(long), 1)
-        w_short = -0.5 / max(len(short), 1)
-
-        new_weights = {}
-        for t in long["ticker"]:
-            new_weights[t] = w_long
-        for t in short["ticker"]:
-            new_weights[t] = w_short
-
-        # turnover
-        turnover = 0.0
-        tickers = set(new_weights.keys()) | set(prev_weights.keys())
-        for t in tickers:
-            old_w = prev_weights.get(t, 0.0)
-            new_w = new_weights.get(t, 0.0)
-            turnover += abs(new_w - old_w)
-        daily_turnover.append(turnover)
-
-        transaction_cost = turnover * (transaction_cost_bps / 10000.0)
-
-        todays_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
-
-        r = 0.0
-        for t, w in new_weights.items():
-            r += w * todays_ret.get(t, 0.0)
-
-        r_net = r - transaction_cost
-
-        equity *= (1 + r_net)
-        equity_curve.append((d, equity))
-        daily_returns.append(r_net)
-
-        prev_weights = new_weights
-
-    if not equity_curve:
-        raise ValueError("No equity points computed in backtest_long_short")
-
-    eq_series = pd.Series(
-        [v for _, v in equity_curve],
-        index=[d for d, _ in equity_curve],
-    )
+    eq_series = pd.Series(equity, index=sorted(df["date"].unique()))
 
     stats = {
-        "final_value": float(equity),
-        "sharpe": sharpe_ratio(daily_returns, risk_free_rate),
-        "sortino": sortino_ratio(daily_returns, risk_free_rate),
-        "avg_turnover": float(np.mean(daily_turnover)) if daily_turnover else 0.0,
+        "final_value": float(eq_series.iloc[-1]),
+        "sharpe": sharpe_ratio(port_ret, risk_free_rate),
+        "sortino": sortino_ratio(port_ret, risk_free_rate),
     }
 
-    return eq_series, daily_returns, stats
+    return eq_series, port_ret, stats
 
 
 def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate=0.0):
     """
-    Long only top_k portfolio.
-
-    Input:
-        pred_df: DataFrame with columns [date, ticker, pred, realized_ret]
-        top_k: number of long positions per day
-        transaction_cost_bps: cost in basis points per unit of turnover
-        risk_free_rate: daily risk free rate used in Sharpe and Sortino
-
-    Logic:
-        - each day sort by pred
-        - go long top_k assets only
-        - equal weights, fully invested, no shorts
-        - daily rebalancing with transaction costs based on turnover
+    pred_df columns: date, ticker, pred, realized_ret
+    Long only top_k portfolio, equal weight, daily rebalancing.
     """
+
     df = pred_df.copy()
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values(["date", "pred"], ascending=[True, False])
@@ -132,9 +57,10 @@ def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate
             continue
 
         day_df = day_df.sort_values("pred", ascending=False)
+
         long = day_df.head(top_k)
 
-        # equal weights on long only side
+        # equal weight only on long side
         w_long = 1.0 / max(len(long), 1)
 
         new_weights = {t: w_long for t in long["ticker"]}
@@ -164,16 +90,13 @@ def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate
 
         prev_weights = new_weights
 
-    if not equity_curve:
-        raise ValueError("No equity points computed in backtest_long_only")
-
     eq_series = pd.Series(
         [v for _, v in equity_curve],
         index=[d for d, _ in equity_curve],
     )
 
     stats = {
-        "final_value": float(equity),
+        "final_value": equity,
         "sharpe": sharpe_ratio(daily_returns, risk_free_rate),
         "sortino": sortino_ratio(daily_returns, risk_free_rate),
         "avg_turnover": float(np.mean(daily_turnover)) if daily_turnover else 0.0,
@@ -182,44 +105,87 @@ def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate
     return eq_series, daily_returns, stats
 
 
-def backtest_buy_and_hold(price_panel, risk_free_rate=0.0, return_col="log_ret_1d"):
+def backtest_long_short(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate=0.0):
     """
-    Equal weight buy and hold portfolio.
+    pred_df columns: date, ticker, pred, realized_ret
 
-    Input:
-        price_panel: DataFrame with columns [date, ticker, <return_col>]
-                     already filtered to the test period
-        risk_free_rate: daily risk free rate for Sharpe and Sortino
-        return_col: name of the column containing daily returns
-
-    Logic:
-        - at first test date, invest equally in all available tickers
-        - hold weights constant, no rebalancing, no transaction costs
+    Implements:
+        - equal weighted long short portfolio
+        - daily rebalancing
+        - turnover based transaction costs
+        - net returns
     """
-    df = price_panel.copy()
+
+    df = pred_df.copy()
     df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["date", "pred"], ascending=[True, False])
 
-    # pivot returns to matrix [dates, tickers]
-    ret_wide = df.pivot(index="date", columns="ticker", values=return_col).sort_index()
-    ret_wide = ret_wide.fillna(0.0)
+    dates = df["date"].drop_duplicates().sort_values().tolist()
 
-    ret_mat = ret_wide.values  # shape [T, N]
-    n_assets = ret_mat.shape[1]
-    if n_assets == 0:
-        raise ValueError("No assets in price_panel for buy and hold backtest")
+    equity = 1.0
+    equity_curve = []
+    daily_returns = []
 
-    w = np.ones(n_assets) / n_assets
+    prev_weights = {}
 
-    port_ret = ret_mat.dot(w)
-    equity = (1 + port_ret).cumprod()
+    for d in dates:
+        day_df = df[df["date"] == d]
+        if day_df.empty:
+            continue
 
-    eq_series = pd.Series(equity, index=ret_wide.index)
+        day_df = day_df.sort_values("pred", ascending=False)
+
+        long = day_df.head(top_k)
+        short = day_df.tail(top_k)
+
+        # equal weighting
+        w_long = 0.5 / max(len(long), 1)
+        w_short = -0.5 / max(len(short), 1)
+
+        new_weights = {}
+
+        for t in long["ticker"]:
+            new_weights[t] = w_long
+        for t in short["ticker"]:
+            new_weights[t] = w_short
+
+        # compute turnover cost
+        turnover = 0.0
+        tickers = set(new_weights.keys()) | set(prev_weights.keys())
+
+        for t in tickers:
+            old_w = prev_weights.get(t, 0.0)
+            new_w = new_weights.get(t, 0.0)
+            turnover += abs(new_w - old_w)
+
+        transaction_cost = turnover * (transaction_cost_bps / 10000.0)
+
+        # compute portfolio return
+        todays_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+
+        r = 0.0
+        for t, w in new_weights.items():
+            r += w * todays_ret.get(t, 0.0)
+
+        # net return after cost
+        r_net = r - transaction_cost
+
+        equity *= (1 + r_net)
+        equity_curve.append((d, equity))
+        daily_returns.append(r_net)
+
+        prev_weights = new_weights
+
+    eq_series = pd.Series(
+        [v for _, v in equity_curve],
+        index=[d for d, _ in equity_curve],
+    )
 
     stats = {
-        "final_value": float(eq_series.iloc[-1]),
-        "sharpe": sharpe_ratio(port_ret, risk_free_rate),
-        "sortino": sortino_ratio(port_ret, risk_free_rate),
-        "avg_turnover": 0.0,  # no trading after initial allocation
+        "final_value": equity,
+        "sharpe": sharpe_ratio(daily_returns, risk_free_rate),
+        "sortino": sortino_ratio(daily_returns, risk_free_rate),
+        "avg_turnover": turnover / len(dates),
     }
 
-    return eq_series, port_ret, stats
+    return eq_series, daily_returns, stats
