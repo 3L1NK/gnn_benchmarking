@@ -83,7 +83,14 @@ def train_lstm(config):
     set_seed(42)
 
     device_str = config["training"]["device"]
-    device = torch.device(device_str if torch.cuda.is_available() else "cpu")
+    use_cuda = torch.cuda.is_available() and device_str.startswith("cuda")
+    device = torch.device(device_str if use_cuda else "cpu")
+    print(f"[lstm] device={device}, cuda_available={torch.cuda.is_available()}")
+    if use_cuda:
+        try:
+            print(f"[lstm] cuda device name: {torch.cuda.get_device_name(0)}")
+        except Exception:
+            pass
 
     # -----------------------
     # 1. Load and prepare data
