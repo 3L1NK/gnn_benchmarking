@@ -165,21 +165,21 @@ def train_lstm(config):
         train_ds,
         batch_size=config["training"]["batch_size"],
         shuffle=True,
-        num_workers=12,
+        num_workers=16,
         pin_memory=True,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=config["training"]["batch_size"],
         shuffle=False,
-        num_workers=12,
+        num_workers=16,
         pin_memory=True,
     )
     test_loader = DataLoader(
         test_ds,
         batch_size=config["training"]["batch_size"],
         shuffle=False,
-        num_workers=12,
+        num_workers=16,
         pin_memory=True,
     )
 
