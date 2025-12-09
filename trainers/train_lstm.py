@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from itertools import product
+import json
 
 import numpy as np
 import pandas as pd
@@ -93,14 +94,32 @@ def train_lstm(config):
             pass
 
     # -----------------------
-    # 1. Load and prepare data
+    # 1. Load and prepare data (prefer cached features)
     # -----------------------
-    df = load_price_panel(
-        config["data"]["price_file"],
-        config["data"]["start_date"],
-        config["data"]["end_date"],
-    )
-    df, feat_cols = add_technical_features(df)
+    cache_path = Path("data/processed/feature_cache.parquet")
+    cache_cols = cache_path.with_suffix(".cols.json")
+
+    if cache_path.exists():
+        df = pd.read_parquet(cache_path)
+        if cache_cols.exists():
+            with cache_cols.open("r") as f:
+                feat_cols = json.load(f)
+        else:
+            base_cols = {"ticker", "date", "close", "volume", "target"}
+            feat_cols = [c for c in df.columns if c not in base_cols]
+        print(f"[lstm] loaded cached features from {cache_path}")
+    else:
+        df = load_price_panel(
+            config["data"]["price_file"],
+            config["data"]["start_date"],
+            config["data"]["end_date"],
+        )
+        df, feat_cols = add_technical_features(df)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(cache_path)
+        with cache_cols.open("w") as f:
+            json.dump(feat_cols, f)
+        print(f"[lstm] computed features and cached to {cache_path}")
 
     df = df.dropna(subset=list(feat_cols) + ["log_ret_1d"]).reset_index(drop=True)
     df["date"] = pd.to_datetime(df["date"])
@@ -115,29 +134,52 @@ def train_lstm(config):
     lookback = config["data"]["lookback_window"]
     horizon  = config["data"]["target_horizon"]
 
+    cache_dir = Path("cache")
+    cache_dir.mkdir(exist_ok=True)
+
     train_ds = LSTMDataset(train_df, feat_cols, lookback, horizon)
     val_ds   = LSTMDataset(val_df, feat_cols, lookback, horizon)
     test_ds  = LSTMDataset(test_df, feat_cols, lookback, horizon)
+
+    # Cache index lists to avoid recomputing between grid runs
+    index_cache = {
+        "train": (train_ds, cache_dir / "train_index.pt"),
+        "val": (val_ds, cache_dir / "val_index.pt"),
+        "test": (test_ds, cache_dir / "test_index.pt"),
+    }
+    for name, (ds, path) in index_cache.items():
+        if path.exists():
+            try:
+                ds.index_list = torch.load(path)
+                print(f"[lstm] loaded cached {name} indices from {path}")
+            except Exception:
+                pass
+        else:
+            try:
+                torch.save(ds.index_list, path)
+                print(f"[lstm] cached {name} indices to {path}")
+            except Exception:
+                pass
 
     train_loader = DataLoader(
         train_ds,
         batch_size=config["training"]["batch_size"],
         shuffle=True,
-        num_workers=4,
+        num_workers=12,
         pin_memory=True,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=config["training"]["batch_size"],
         shuffle=False,
-        num_workers=4,
+        num_workers=12,
         pin_memory=True,
     )
     test_loader = DataLoader(
         test_ds,
         batch_size=config["training"]["batch_size"],
         shuffle=False,
-        num_workers=4,
+        num_workers=12,
         pin_memory=True,
     )
 

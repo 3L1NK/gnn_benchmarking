@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -67,6 +68,14 @@ def main():
     df, feat_cols = add_technical_features(df)
 
     print("Feature columns:", feat_cols)
+
+    # Cache full feature dataset for reuse in trainers
+    cache_path = Path("data/processed/feature_cache.parquet")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(cache_path)
+    with (cache_path.with_suffix(".cols.json")).open("w") as f:
+        json.dump(feat_cols, f)
+    print("Feature cache saved to:", cache_path)
 
     # Step 3. Stationarity test
     print("Step 3. Running stationarity tests")
