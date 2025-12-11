@@ -14,7 +14,7 @@ from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
 from utils.metrics import rank_ic, hit_rate
-from utils.backtest import backtest_long_only
+from utils.backtest import backtest_long_only, backtest_buy_and_hold
 from utils.plot import (
     plot_equity_curve,
     plot_daily_ic,
@@ -41,39 +41,44 @@ class LSTMDataset(Dataset):
         df = df.dropna(subset=["target"]).reset_index(drop=True)
 
         # group once
-        self.groups = {
-            t: g.reset_index(drop=True)
-            for t, g in df.groupby("ticker")
-        }
-
-        # locations for __getitem__
+        self.group_arrays = {}
+        self.targets = {}
         self.index_list = []
-        for t, g in self.groups.items():
+        self.meta_dates = []
+        self.meta_tickers = []
+
+        for t, g in df.groupby("ticker"):
+            g = g.reset_index(drop=True)
+            if len(g) <= lookback:
+                continue
+
+            x = g[feat_cols].values.astype("float32")  # fast, no pandas
+            y = g["target"].values.astype("float32")
+
+            self.group_arrays[t] = x
+            self.targets[t] = y
+
             for pos in range(lookback, len(g)):
                 self.index_list.append((t, pos))
+                self.meta_dates.append(g.loc[pos, "date"])
+                self.meta_tickers.append(t)
 
     def __len__(self):
         return len(self.index_list)
 
     def __getitem__(self, idx):
         t, pos = self.index_list[idx]
-        g = self.groups[t]
-
         start = pos - self.lookback
         end = pos
 
-        seq = g.loc[start:end - 1, self.feat_cols].values.astype(float)
-        target = float(g.loc[end, "target"])
-
-        date = str(g.loc[end, "date"])
-        ticker = str(t)
+        x = self.group_arrays[t][start:end]
+        y = self.targets[t][end]
 
         return (
-            torch.tensor(seq, dtype=torch.float32),
-            torch.tensor(target, dtype=torch.float32),
-            date,
-            ticker,
+            torch.from_numpy(x),
+            torch.tensor(y),
         )
+
 
 
 # -------------------------------------------------
@@ -86,6 +91,7 @@ def train_lstm(config):
     device_str = config["training"]["device"]
     use_cuda = torch.cuda.is_available() and device_str.startswith("cuda")
     device = torch.device(device_str if use_cuda else "cpu")
+    torch.backends.cudnn.benchmark = True
     print(f"[lstm] device={device}, cuda_available={torch.cuda.is_available()}")
     if use_cuda:
         try:
@@ -246,7 +252,7 @@ def train_lstm(config):
             # short training for tuning
             for epoch in range(max_epochs_tune):
                 model.train()
-                for x, y, _, _ in train_loader:
+                for x, y in train_loader:
                     x = x.to(device)
                     y = y.to(device)
 
@@ -260,13 +266,13 @@ def train_lstm(config):
             model.eval()
             val_losses = []
             with torch.no_grad():
-                for x, y, _, _ in val_loader:
+                for x, y in val_loader:
                     x = x.to(device)
                     y = y.to(device)
                     pred = model(x)
-                    val_losses.append(loss_fn(pred, y).item())
+                    val_losses.append(loss_fn(pred, y).detach())
 
-            mean_val = float(np.mean(val_losses)) if val_losses else float("inf")
+            mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("inf")
             print("Params", params, "val_loss", mean_val)
 
             if mean_val < best_val:
@@ -303,7 +309,7 @@ def train_lstm(config):
         model.train()
         train_losses = []
 
-        for x, y, _, _ in train_loader:
+        for x, y in train_loader:
             x = x.to(device)
             y = y.to(device)
 
@@ -313,20 +319,20 @@ def train_lstm(config):
             loss.backward()
             optimizer.step()
 
-            train_losses.append(loss.item())
+            train_losses.append(loss.detach())
 
         # validation
         model.eval()
         val_losses = []
         with torch.no_grad():
-            for x, y, _, _ in val_loader:
+            for x, y in val_loader:
                 x = x.to(device)
                 y = y.to(device)
                 pred = model(x)
-                val_losses.append(loss_fn(pred, y).item())
+                val_losses.append(loss_fn(pred, y).detach())
 
-        mean_train = float(np.mean(train_losses)) if train_losses else float("nan")
-        mean_val = float(np.mean(val_losses)) if val_losses else float("inf")
+        mean_train = float(torch.stack(train_losses).mean().item()) if train_losses else float("nan")
+        mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("inf")
         print(f"[LSTM] Epoch {epoch} train {mean_train:.5f} val {mean_val:.5f}")
 
         if mean_val < best_val:
@@ -346,19 +352,23 @@ def train_lstm(config):
     model.eval()
 
     rows = []
+    all_preds = []
+    all_real = []
     with torch.no_grad():
-        for x, y, dates, tickers in test_loader:
+        for x, y in test_loader:
             x = x.to(device)
             preds = model(x).cpu().numpy()
             y_np = y.numpy()
+            all_preds.extend(preds)
+            all_real.extend(y_np)
 
-            for p, r, d, t in zip(preds, y_np, dates, tickers):
-                rows.append({
-                    "date": pd.to_datetime(d),
-                    "ticker": t,
-                    "pred": float(p),
-                    "realized_ret": float(r),
-                })
+    for i, (p, r) in enumerate(zip(all_preds, all_real)):
+        rows.append({
+            "date": pd.to_datetime(test_ds.meta_dates[i]),
+            "ticker": test_ds.meta_tickers[i],
+            "pred": float(p),
+            "realized_ret": float(r),
+        })
 
     pred_df = pd.DataFrame(rows).sort_values("date")
     pred_df.to_csv(out_dir / "lstm_predictions.csv", index=False)
@@ -392,7 +402,7 @@ def train_lstm(config):
     )
 
     # -----------------------
-    # 6. Long only backtest, daily rebalancing
+    # 6. Long only backtest, daily rebalancing + buy-and-hold comparison
     # -----------------------
     curve, daily_ret, stats = backtest_long_only(
         pred_df,
@@ -405,3 +415,21 @@ def train_lstm(config):
     plot_equity_curve(curve, "LSTM long only", out_dir / "lstm_equity_curve.png")
 
     print("LSTM backtest stats:", stats)
+
+    # Buy-and-hold on the same test window for comparison
+    bh_df = pred_df[["date", "ticker", "realized_ret"]].rename(
+        columns={"realized_ret": "log_ret_1d"}
+    )
+    eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
+        bh_df,
+        risk_free_rate=config["evaluation"]["risk_free_rate"],
+    )
+    eq_bh.to_csv(out_dir / "lstm_buy_and_hold_equity_curve.csv", header=["value"])
+
+    plot_equity_curve(
+        eq_bh,
+        "Buy and Hold",
+        out_dir / "lstm_buy_and_hold_equity_curve.png",
+    )
+
+    print("Buy-and-hold stats:", stats_bh)
