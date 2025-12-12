@@ -17,6 +17,7 @@ from utils.metrics import rank_ic, hit_rate
 from utils.backtest import backtest_long_only, backtest_buy_and_hold
 from utils.plot import (
     plot_equity_curve,
+    plot_equity_comparison,
     plot_daily_ic,
     plot_ic_hist,
 )
@@ -430,6 +431,14 @@ def train_lstm(config):
         eq_bh,
         "Buy and Hold",
         out_dir / "lstm_buy_and_hold_equity_curve.png",
+    )
+
+    # Combined comparison plot
+    plot_equity_comparison(
+        curve,
+        eq_bh,
+        "LSTM vs Buy and Hold",
+        out_dir / "lstm_equity_comparison.png",
     )
 
     print("Buy-and-hold stats:", stats_bh)
