@@ -8,7 +8,7 @@ data:
   min_history: 2500
 
 model:
-  family: baseline
+  family: xgboost
   type: graphlasso_xgb
 
 graphlasso_alpha: 0.01

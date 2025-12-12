@@ -7,7 +7,7 @@ data:
   target_horizon: 1
 
 model:
-  family: baseline
+  family: xgboost
   type: granger_xgb
 
 training:

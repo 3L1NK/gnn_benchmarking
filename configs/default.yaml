@@ -7,6 +7,17 @@ data:
   corr_window: 60
   corr_threshold: 0.4
 
+graph_edges:
+  use_correlation: true
+  use_sector: true
+  use_industry: true
+  use_granger: false
+  use_graphical_lasso: false
+  granger_max_lag: 2
+  granger_p_threshold: 0.05
+  graphlasso_alpha: 0.01
+  graphlasso_window: 60
+
 training:
   batch_size: 1
   lr: 0.0005
