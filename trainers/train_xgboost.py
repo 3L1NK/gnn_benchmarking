@@ -128,8 +128,6 @@ def _add_graph_smooth_features(df, feat_cols, adj_dict, alpha=0.5):
     df_out = pd.concat(out_frames, ignore_index=True)
     return df_out, smoothed_cols
 
-
-
 class XGBoostTrainer:
     def __init__(self, config):
         self.config = config
@@ -263,9 +261,11 @@ class XGBoostTrainer:
         # 2. Read config
         # -----------------------
         model_cfg = self.config["model"]
-        use_tuning = self.config["tuning"]["enabled"]
+        tuning_cfg = self.config.get("tuning", {})
+        use_tuning = tuning_cfg.get("enabled", False)
         print("XGB tuning enabled:", use_tuning)
         fixed_params = model_cfg.get("params", {})
+        param_grid = tuning_cfg.get("param_grid", {})
 
         # -----------------------
         # 3. Model builder
@@ -282,23 +282,25 @@ class XGBoostTrainer:
         # 4. Hyperparameter logic
         # -----------------------
         if use_tuning:
-            print("Starting XGB hyperparameter search")
+            if not param_grid:
+                print("No param_grid provided in config.tuning.param_grid; using fixed params only")
+                param_grid = {}
 
-            param_grid = {
-                "max_depth":        [3, 4],
-                "learning_rate":    [0.01, 0.03, 0.05],
-                "n_estimators":     [300, 600],
-                "subsample":        [0.7, 0.9],
-                "colsample_bytree": [0.7, 0.9],
-                "reg_lambda":       [0.0, 1.0],
-            }
+            print("Starting XGB hyperparameter search from YAML param_grid")
 
             best_params = None
             best_rmse = float("inf")
 
-            for values in product(*param_grid.values()):
-                params = dict(zip(param_grid.keys(), values))
+            if not param_grid:
+                candidates = [fixed_params]
+            else:
+                candidates = []
+                keys = list(param_grid.keys())
+                for values in product(*param_grid.values()):
+                    overrides = dict(zip(keys, values))
+                    candidates.append({**fixed_params, **overrides})
 
+            for params in candidates:
                 model = make_model(params)
                 model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
@@ -638,5 +640,4 @@ def train_xgboost(config):
     """Entry point used by train.py."""
     trainer = XGBoostTrainer(config)
     trainer.run()
-
 
