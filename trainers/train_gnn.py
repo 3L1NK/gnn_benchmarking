@@ -47,6 +47,7 @@ def _build_snapshots_and_targets(config):
     corr_min_periods = int(graph_cfg.get("corr_min_periods", max(5, corr_window // 2)))
     sector_weight = float(graph_cfg.get("sector_weight", 0.2))
     industry_weight = float(graph_cfg.get("industry_weight", 0.1))
+    log_edge_stats = graph_cfg.get("log_edge_stats", False)
 
     # load panel and compute features
     df = load_price_panel(price_file, start, end)
@@ -144,11 +145,37 @@ def _build_snapshots_and_targets(config):
         if not np.isfinite(x).all() or not np.isfinite(y_ret).all():
             continue
 
+        # ---------------------------------------
+        # 1) Cross-sectional feature standardization (per day, valid nodes only)
+        # ---------------------------------------
+        valid_mask_np = np.array(valid_mask, dtype=bool)
+        x_std = x.copy()
+        for col in range(x_std.shape[1]):
+            vals = x_std[valid_mask_np, col]
+            if vals.size == 0:
+                x_std[:, col] = 0.0
+                continue
+            mean = vals.mean()
+            std = vals.std()
+            if std < 1e-8:
+                x_std[:, col] = 0.0
+            else:
+                x_std[:, col] = (x_std[:, col] - mean) / std
+        x = x_std
+
+        # skip days where all valid nodes are zero after standardization
+        if not np.any(np.abs(x[valid_mask_np]) > 1e-8):
+            print(f"[graph] {d.date()} skipped (standardized features all zero for valid nodes)")
+            continue
+
         edge_dict = {}  # (i, j) -> weight
 
         # 1) correlation based edges (top-k by |rho|, no zero-filling)
         if use_corr:
-            window_sub = window_ret[tickers_list]
+            window_sub = window_ret[tickers_list].copy()
+            # ignore invalid nodes in correlation
+            if (~valid_mask_np).any():
+                window_sub.loc[:, [t for t, m in zip(tickers_list, valid_mask_np) if not m]] = np.nan
             corr_mat = window_sub.corr(min_periods=corr_min_periods).values
             if corr_mat.shape != (n_nodes, n_nodes):
                 continue
@@ -166,6 +193,8 @@ def _build_snapshots_and_targets(config):
                     top_idx = valid_idx
 
                 for j in top_idx:
+                    if not (valid_mask_np[i] and valid_mask_np[j]):
+                        continue
                     w = row[j]
                     if not np.isfinite(w) or abs(w) < corr_thr:
                         continue
@@ -177,11 +206,15 @@ def _build_snapshots_and_targets(config):
         if use_sector and sector_weight > 0:
             for i in range(n_nodes):
                 ti = tickers_list[i]
+                if not valid_mask_np[i]:
+                    continue
                 si = sector_map.get(ti)
                 if si is None or (isinstance(si, float) and np.isnan(si)):
                     continue
                 for j in range(i + 1, n_nodes):
                     tj = tickers_list[j]
+                    if not valid_mask_np[j]:
+                        continue
                     sj = sector_map.get(tj)
                     if sj is None or (isinstance(sj, float) and np.isnan(sj)):
                         continue
@@ -193,11 +226,15 @@ def _build_snapshots_and_targets(config):
         if use_industry and industry_weight > 0:
             for i in range(n_nodes):
                 ti = tickers_list[i]
+                if not valid_mask_np[i]:
+                    continue
                 ii = industry_map.get(ti)
                 if ii is None or (isinstance(ii, float) and np.isnan(ii)):
                     continue
                 for j in range(i + 1, n_nodes):
                     tj = tickers_list[j]
+                    if not valid_mask_np[j]:
+                        continue
                     ij = industry_map.get(tj)
                     if ij is None or (isinstance(ij, float) and np.isnan(ij)):
                         continue
@@ -228,7 +265,8 @@ def _build_snapshots_and_targets(config):
         deg = torch.bincount(edge_index[0], minlength=n_nodes)
         avg_deg = float(deg.float().mean().item()) if len(deg) > 0 else 0.0
         max_deg = int(deg.max().item()) if len(deg) > 0 else 0
-        print(f"[graph] {d.date()} nodes={n_nodes} edges={num_edges} avg_deg={avg_deg:.2f} max_deg={max_deg}")
+        if log_edge_stats:
+            print(f"[graph] {d.date()} nodes={n_nodes} edges={num_edges} avg_deg={avg_deg:.2f} max_deg={max_deg}")
 
         # build PyG Data object
         x_tensor = torch.tensor(x, dtype=torch.float32)
@@ -306,85 +344,109 @@ def _train_static_gnn(config):
     val_loader = GeoDataLoader(val_snaps, batch_size=1, shuffle=False)
     test_loader = GeoDataLoader(test_snaps, batch_size=1, shuffle=False)
 
-    model = StaticGNN(
-        gnn_type=config["model"]["type"],
-        input_dim=len(feat_cols),
-        hidden_dim=config["model"]["hidden_dim"],
-        num_layers=config["model"]["num_layers"],
-        dropout=config["model"]["dropout"],
-    ).to(device)
-
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=config["training"]["lr"],
-        weight_decay=config["training"]["weight_decay"],
-    )
-    loss_fn = torch.nn.MSELoss()
-
-    best_val = float("inf")
-    bad_epochs = 0
-    patience = config["training"]["patience"]
-
     # Write outputs under evaluation.out_dir / model_name to avoid collisions
     out_dir = Path(config["evaluation"]["out_dir"]) / config["model"]["type"]
     out_dir.mkdir(parents=True, exist_ok=True)
-    model_path = out_dir / f"best_{config['model']['type']}.pt"
+    loss_fn = torch.nn.MSELoss()
+    hidden_candidates = config["model"].get("hidden_dim_candidates", [32, 64])
+    hidden_candidates = list(dict.fromkeys(hidden_candidates))
+    num_layers = 1  # force shallow GCN to reduce over-smoothing
 
-    for epoch in range(config["training"]["max_epochs"]):
-        model.train()
-        train_losses = []
+    patience_cfg = config["training"]["patience"]
+    patience = max(patience_cfg * 2, patience_cfg + 20)
+    min_epochs = config["training"].get("min_epochs", patience)
+    max_epochs = config["training"]["max_epochs"]
 
-        for batch in train_loader:
-            batch = batch.to(device)
-            optimizer.zero_grad()
-            logits = model(batch.x, batch.edge_index, batch.edge_weight)
+    best_overall_val = float("inf")
+    best_state = None
+    best_hidden = None
 
-            # simple mask: only finite labels
-            mask = batch.valid_mask & torch.isfinite(batch.y)
-            if mask.sum() == 0:
-                continue
+    for hidden_dim in hidden_candidates:
+        print(f"[{config['model']['type'].upper()}] training candidate hidden_dim={hidden_dim}")
+        model = StaticGNN(
+            gnn_type=config["model"]["type"],
+            input_dim=len(feat_cols),
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            dropout=config["model"]["dropout"],
+        ).to(device)
 
-            loss = loss_fn(logits[mask], batch.y[mask])
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
-                config["training"]["gradient_clip"],
-            )
-            optimizer.step()
-            train_losses.append(loss.item())
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=config["training"]["lr"],
+            weight_decay=config["training"]["weight_decay"],
+        )
 
-        model.eval()
-        val_losses = []
-        with torch.no_grad():
-            for batch in val_loader:
+        best_val = float("inf")
+        bad_epochs = 0
+        best_state_candidate = None
+
+        for epoch in range(max_epochs):
+            model.train()
+            train_losses = []
+
+            for batch in train_loader:
                 batch = batch.to(device)
+                optimizer.zero_grad()
                 logits = model(batch.x, batch.edge_index, batch.edge_weight)
+
+                # simple mask: only finite labels
                 mask = batch.valid_mask & torch.isfinite(batch.y)
                 if mask.sum() == 0:
                     continue
+
                 loss = loss_fn(logits[mask], batch.y[mask])
-                val_losses.append(loss.item())
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    config["training"]["gradient_clip"],
+                )
+                optimizer.step()
+                train_losses.append(loss.item())
 
-        mean_train = float(np.mean(train_losses)) if train_losses else float("nan")
-        mean_val = float(np.mean(val_losses)) if val_losses else float("nan")
-        print(f"[{config['model']['type'].upper()}] epoch {epoch} train {mean_train:.5f} val {mean_val:.5f}")
+            model.eval()
+            val_losses = []
+            with torch.no_grad():
+                for batch in val_loader:
+                    batch = batch.to(device)
+                    logits = model(batch.x, batch.edge_index, batch.edge_weight)
+                    mask = batch.valid_mask & torch.isfinite(batch.y)
+                    if mask.sum() == 0:
+                        continue
+                    loss = loss_fn(logits[mask], batch.y[mask])
+                    val_losses.append(loss.item())
 
-        if np.isfinite(mean_val) and mean_val < best_val:
-            best_val = mean_val
-            bad_epochs = 0
-            torch.save(model.state_dict(), model_path)
-        else:
-            bad_epochs += 1
-            if bad_epochs >= patience:
-                print("Early stopping")
-                break
+            mean_train = float(np.mean(train_losses)) if train_losses else float("nan")
+            mean_val = float(np.mean(val_losses)) if val_losses else float("nan")
+            print(f"[{config['model']['type'].upper()}-{hidden_dim}] epoch {epoch} train {mean_train:.5f} val {mean_val:.5f}")
 
-    if not model_path.exists():
-        raise RuntimeError(
-            f"No checkpoint saved to '{model_path}'. Validation never produced a usable batch."
-        )
+            if np.isfinite(mean_val) and mean_val < best_val:
+                best_val = mean_val
+                bad_epochs = 0
+                best_state_candidate = {k: v.cpu() for k, v in model.state_dict().items()}
+            else:
+                bad_epochs += 1
+                if (epoch + 1) >= min_epochs and bad_epochs >= patience:
+                    print(f"[{config['model']['type'].upper()}-{hidden_dim}] Early stopping")
+                    break
 
-    model.load_state_dict(torch.load(model_path, map_location=device))
+        if best_state_candidate is not None and best_val < best_overall_val:
+            best_overall_val = best_val
+            best_state = best_state_candidate
+            best_hidden = hidden_dim
+
+    if best_state is None:
+        raise RuntimeError("No checkpoint saved; validation never produced a usable batch.")
+
+    # rebuild best model
+    model = StaticGNN(
+        gnn_type=config["model"]["type"],
+        input_dim=len(feat_cols),
+        hidden_dim=best_hidden,
+        num_layers=num_layers,
+        dropout=config["model"]["dropout"],
+    ).to(device)
+    model.load_state_dict(best_state)
     model.eval()
 
     # test predictions and backtest
@@ -428,6 +490,16 @@ def _train_static_gnn(config):
     pred_df = pd.DataFrame(rows)
     pred_df.to_csv(out_dir / f"{config['model']['type']}_predictions.csv", index=False)
 
+    # Diagnostic: check per-day prediction diversity
+    pred_counts = pred_df.groupby("date")["pred"].nunique()
+    low_var_days = pred_counts[pred_counts < 2]
+    if not low_var_days.empty:
+        print(f"[{config['model']['type'].upper()}] Warning: {len(low_var_days)} days with constant predictions")
+        low_var_days.to_frame("unique_preds").reset_index().to_csv(
+            out_dir / f"{config['model']['type']}_constant_pred_days.csv",
+            index=False,
+        )
+
     daily_metrics = []
     for d, g in pred_df.groupby("date"):
         ic = rank_ic(g["pred"], g["realized_ret"])
@@ -436,8 +508,14 @@ def _train_static_gnn(config):
     daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
     daily_metrics.to_csv(out_dir / f"{config['model']['type']}_daily_metrics.csv", index=False)
 
-    plot_daily_ic(daily_metrics, out_dir / f"{config['model']['type']}_ic_timeseries.png")
-    plot_ic_hist(daily_metrics, out_dir / f"{config['model']['type']}_ic_histogram.png")
+    ic_path = out_dir / f"{config['model']['type']}_ic_timeseries.png"
+    ic_hist_path = out_dir / f"{config['model']['type']}_ic_histogram.png"
+    if daily_metrics["ic"].notna().any():
+        plot_daily_ic(daily_metrics, ic_path)
+        plot_ic_hist(daily_metrics, ic_hist_path)
+        print(f"[{config['model']['type'].upper()}] Saved IC plots: {ic_path}, {ic_hist_path}")
+    else:
+        print(f"[{config['model']['type'].upper()}] Skipping IC plots (all IC values NaN)")
 
     print(
         f"{config['model']['type'].upper()} mean IC",
@@ -452,12 +530,14 @@ def _train_static_gnn(config):
         transaction_cost_bps=config["evaluation"]["transaction_cost_bps"],
         risk_free_rate=config["evaluation"]["risk_free_rate"],
     )
+    eq_path = out_dir / f"{config['model']['type']}_equity_curve.png"
     equity_curve.to_csv(out_dir / f"{config['model']['type']}_equity_curve.csv", header=["value"])
     plot_equity_curve(
         equity_curve,
         f"{config['model']['type'].upper()} long only",
-        out_dir / f"{config['model']['type']}_equity_curve.png",
+        eq_path,
     )
+    print(f"[{config['model']['type'].upper()}] Saved equity curve to {eq_path}")
 
     # Buy-and-hold baseline for the same window
     bh_df = pred_df[["date", "ticker", "realized_ret"]].rename(columns={"realized_ret": "log_ret_1d"})
@@ -465,20 +545,24 @@ def _train_static_gnn(config):
         bh_df,
         risk_free_rate=config["evaluation"]["risk_free_rate"],
     )
+    bh_path = out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.png"
     eq_bh.to_csv(out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.csv", header=["value"])
     plot_equity_curve(
         eq_bh,
         "Buy and Hold",
-        out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.png",
+        bh_path,
     )
+    print(f"[{config['model']['type'].upper()}] Saved buy-and-hold curve to {bh_path}")
 
     # Combined comparison plot
+    comp_path = out_dir / f"{config['model']['type']}_equity_comparison.png"
     plot_equity_comparison(
         model_curve=equity_curve,
         bh_curve=eq_bh,
         title=f"{config['model']['type'].upper()} vs Buy and Hold",
-        out_path=out_dir / f"{config['model']['type']}_equity_comparison.png",
+        out_path=comp_path,
     )
+    print(f"[{config['model']['type'].upper()}] Saved equity comparison to {comp_path}")
 
     print(f"{config['model']['type'].upper()} backtest stats", stats)
     print("Buy-and-hold stats", stats_bh)
@@ -645,8 +729,14 @@ def _train_tgcn(config):
     mean_hit = daily_metrics["hit"].dropna().mean()
 
     daily_metrics.to_csv(out_dir / "tgcn_daily_metrics.csv", index=False)
-    plot_daily_ic(daily_metrics, out_dir / "tgcn_ic_timeseries.png")
-    plot_ic_hist(daily_metrics, out_dir / "tgcn_ic_histogram.png")
+    ic_path = out_dir / "tgcn_ic_timeseries.png"
+    ic_hist_path = out_dir / "tgcn_ic_histogram.png"
+    if daily_metrics["ic"].notna().any():
+        plot_daily_ic(daily_metrics, ic_path)
+        plot_ic_hist(daily_metrics, ic_hist_path)
+        print(f"[TGCN] Saved IC plots: {ic_path}, {ic_hist_path}")
+    else:
+        print("[TGCN] Skipping IC plots (all IC values NaN)")
     print("TGCN mean IC", mean_ic)
     print("TGCN mean hit", mean_hit)
 
@@ -662,6 +752,7 @@ def _train_tgcn(config):
         "TGCN long only",
         out_dir / "tgcn_equity_curve.png",
     )
+    print(f"[TGCN] Saved equity curve to {out_dir / 'tgcn_equity_curve.png'}")
 
     bh_df = pred_df[["date", "ticker", "realized_ret"]].rename(columns={"realized_ret": "log_ret_1d"})
     eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
@@ -674,6 +765,7 @@ def _train_tgcn(config):
         "Buy and Hold",
         out_dir / "tgcn_buy_and_hold_equity_curve.png",
     )
+    print(f"[TGCN] Saved buy-and-hold curve to {out_dir / 'tgcn_buy_and_hold_equity_curve.png'}")
 
     plot_equity_comparison(
         model_curve=curve,
@@ -681,6 +773,7 @@ def _train_tgcn(config):
         title="TGCN vs Buy and Hold",
         out_path=out_dir / "tgcn_equity_comparison.png",
     )
+    print(f"[TGCN] Saved equity comparison to {out_dir / 'tgcn_equity_comparison.png'}")
 
     print("TGCN backtest stats", stats)
     print("Buy-and-hold stats", stats_bh)

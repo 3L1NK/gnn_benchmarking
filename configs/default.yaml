@@ -2,7 +2,7 @@ data:
   price_file: "data/processed/prices.parquet"
   start_date: "2000-01-01"
   end_date: "2024-12-31"
-  target_horizon: 1 # days ahead, for week use 5
+  target_horizon: 1 # default daily; override per model if needed
   lookback_window: 60
   corr_window: 60
   corr_threshold: 0.4
@@ -15,6 +15,7 @@ graph_edges:
   use_industry: true
   sector_weight: 0.2
   industry_weight: 0.1
+  log_edge_stats: false
   use_granger: false
   use_graphical_lasso: false
   granger_max_lag: 2
@@ -27,8 +28,9 @@ training:
   lr: 0.0005
   weight_decay: 0.0001
   gradient_clip: 1.0
-  max_epochs: 200
-  patience: 20
+  max_epochs: 300
+  patience: 40
+  min_epochs: 60
   device: "cuda"
 
   val_start: "2016-01-01"

@@ -3,9 +3,12 @@ experiment_name: gcn
 model:
   family: gnn
   type: gcn
-  input_dim: 32
-  hidden_dim: 128
-  num_layers: 3
+  hidden_dim_candidates: [32, 64]
+  hidden_dim: 64
+  num_layers: 1
   dropout: 0.1
 
 include: "configs/default.yaml"
+
+data:
+  target_horizon: 5  # weekly horizon to reduce noise for GCN
