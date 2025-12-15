@@ -6,7 +6,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-#from trainers.train_gnn import train_gnn
+from trainers.train_gnn import train_gnn
 from trainers.train_lstm import train_lstm
 from trainers.train_xgboost import train_xgboost
 
