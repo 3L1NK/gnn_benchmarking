@@ -6,11 +6,15 @@ data:
   lookback_window: 60
   corr_window: 60
   corr_threshold: 0.4
+  corr_top_k: 10
+  corr_min_periods: 30
 
 graph_edges:
   use_correlation: true
   use_sector: true
   use_industry: true
+  sector_weight: 0.2
+  industry_weight: 0.1
   use_granger: false
   use_graphical_lasso: false
   granger_max_lag: 2

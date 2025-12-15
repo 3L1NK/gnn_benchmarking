@@ -4,7 +4,8 @@ import pandas as pd
 
 def rank_ic(pred, target):
     df = pd.DataFrame({"pred": pred, "target": target}).dropna()
-    if len(df) < 3:
+    # Require some variation; Spearman warns on constant inputs.
+    if len(df) < 3 or df["pred"].nunique() < 2 or df["target"].nunique() < 2:
         return np.nan
     return df["pred"].rank().corr(df["target"].rank(), method="spearman")
 

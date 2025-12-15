@@ -1,6 +1,5 @@
 # trainers/train_gnn.py
 
-import os
 from pathlib import Path
 
 import numpy as np
@@ -13,19 +12,21 @@ from models.gnn_model import StaticGNN
 from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
-from utils.graphs import sector_edges, industry_edges
 from utils.metrics import rank_ic, hit_rate
-from utils.backtest import backtest_long_short
-from utils.plot import plot_equity_curve
+from utils.backtest import backtest_long_only, backtest_buy_and_hold
+from utils.plot import (
+    plot_daily_ic,
+    plot_ic_hist,
+    plot_equity_curve,
+    plot_equity_comparison,
+)
 
 
 def _build_snapshots_and_targets(config):
     """
     Create one graph snapshot per trading day with node features, edges and targets.
 
-    Targets:
-      y      = classification label (1 if next log return > 0 else 0)
-      y_ret  = realized next period log return (for evaluation and backtest)
+    Target is regression: next log return (ret_target) stored as Data.y.
 
     Important: we enforce a fixed universe of tickers for every day so that
     all graph snapshots have the same number and ordering of nodes.
@@ -38,6 +39,14 @@ def _build_snapshots_and_targets(config):
     horizon = config["data"]["target_horizon"]
     corr_window = config["data"]["corr_window"]
     corr_thr = config["data"]["corr_threshold"]
+    graph_cfg = config.get("graph_edges", {})
+    use_corr = graph_cfg.get("use_correlation", True)
+    use_sector = graph_cfg.get("use_sector", True)
+    use_industry = graph_cfg.get("use_industry", True)
+    corr_top_k = int(graph_cfg.get("corr_top_k", 10))
+    corr_min_periods = int(graph_cfg.get("corr_min_periods", max(5, corr_window // 2)))
+    sector_weight = float(graph_cfg.get("sector_weight", 0.2))
+    industry_weight = float(graph_cfg.get("industry_weight", 0.1))
 
     # load panel and compute features
     df = load_price_panel(price_file, start, end)
@@ -66,11 +75,8 @@ def _build_snapshots_and_targets(config):
     # regression style target: next horizon log return
     df["ret_target"] = df.groupby("ticker")["log_ret_1d"].shift(-horizon)
 
-    # classification label: 1 if ret_target > 0 else 0
-    df["target"] = (df["ret_target"] > 0).astype(float)
-
-    # drop rows where we do not know next return or target
-    df = df.dropna(subset=["ret_target", "target"]).reset_index(drop=True)
+    # drop rows where we do not know next return
+    df = df.dropna(subset=["ret_target"]).reset_index(drop=True)
 
     # pivot for correlation on returns, reindex to full universe
     ret_pivot = (
@@ -105,25 +111,24 @@ def _build_snapshots_and_targets(config):
         universe_today = df[df["date"] == d].set_index("ticker")
 
         feat_for_date = {}
-        target_cls_for_date = {}
         target_ret_for_date = {}
+        valid_mask = []
 
         # build features and targets for the full fixed universe
         for t in universe_list:
             if t in universe_today.index:
                 row = universe_today.loc[t]
                 feat_vec = row[feat_cols].values.astype(float)
-                y_cls = float(row["target"])
                 y_ret = float(row["ret_target"])
+                valid_mask.append(True)
             else:
                 # ticker not present on this date or dropped by NaNs earlier
                 # use zeros so node exists but carries no signal
                 feat_vec = np.zeros(len(feat_cols), dtype=float)
-                y_cls = 0.0
                 y_ret = 0.0
+                valid_mask.append(False)
 
             feat_for_date[t] = feat_vec
-            target_cls_for_date[t] = y_cls
             target_ret_for_date[t] = y_ret
 
         # node count is fixed
@@ -132,70 +137,73 @@ def _build_snapshots_and_targets(config):
         if n_nodes < 2:
             continue
 
-        # node feature matrix, classification labels, realized returns
+        # node feature matrix and realized returns
         x = np.vstack([feat_for_date[t] for t in tickers_list])
-        y_cls = np.array([target_cls_for_date[t] for t in tickers_list], dtype=np.float32)
         y_ret = np.array([target_ret_for_date[t] for t in tickers_list], dtype=np.float32)
 
-        if not np.isfinite(x).all() or not np.isfinite(y_cls).all() or not np.isfinite(y_ret).all():
+        if not np.isfinite(x).all() or not np.isfinite(y_ret).all():
             continue
 
-        # restrict return window to current tickers, fill missing with 0
-        window_sub = window_ret[tickers_list].fillna(0.0)
-
-        # correlation matrix
-        corr_mat = window_sub.corr().values
-        if corr_mat.shape != (n_nodes, n_nodes):
-            continue
-
-        # build combined edges: correlation, sector, industry
         edge_dict = {}  # (i, j) -> weight
 
-        # 1) correlation based edges
-        for i in range(n_nodes):
-            for j in range(i + 1, n_nodes):
-                w = corr_mat[i, j]
-                if not np.isfinite(w):
-                    continue
-                if abs(w) < corr_thr:
-                    continue
-                w_abs = float(abs(w))
-                edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), w_abs)
-                edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), w_abs)
-
-        # 2) sector edges (weight 1.0 if same sector)
-        for i in range(n_nodes):
-            ti = tickers_list[i]
-            si = sector_map.get(ti)
-            if si is None or (isinstance(si, float) and np.isnan(si)):
+        # 1) correlation based edges (top-k by |rho|, no zero-filling)
+        if use_corr:
+            window_sub = window_ret[tickers_list]
+            corr_mat = window_sub.corr(min_periods=corr_min_periods).values
+            if corr_mat.shape != (n_nodes, n_nodes):
                 continue
-            for j in range(i + 1, n_nodes):
-                tj = tickers_list[j]
-                sj = sector_map.get(tj)
-                if sj is None or (isinstance(sj, float) and np.isnan(sj)):
-                    continue
-                if si == sj:
-                    if (i, j) not in edge_dict:
-                        edge_dict[(i, j)] = 1.0
-                    if (j, i) not in edge_dict:
-                        edge_dict[(j, i)] = 1.0
 
-        # 3) industry edges (also weight 1.0)
-        for i in range(n_nodes):
-            ti = tickers_list[i]
-            ii = industry_map.get(ti)
-            if ii is None or (isinstance(ii, float) and np.isnan(ii)):
-                continue
-            for j in range(i + 1, n_nodes):
-                tj = tickers_list[j]
-                ij = industry_map.get(tj)
-                if ij is None or (isinstance(ij, float) and np.isnan(ij)):
+            for i in range(n_nodes):
+                row = corr_mat[i]
+                if len(row) != n_nodes:
                     continue
-                if ii == ij:
-                    if (i, j) not in edge_dict:
-                        edge_dict[(i, j)] = 1.0
-                    if (j, i) not in edge_dict:
-                        edge_dict[(j, i)] = 1.0
+                row = row.copy()
+                row[i] = np.nan
+                valid_idx = np.where(np.isfinite(row))[0]
+                if corr_top_k > 0 and len(valid_idx) > corr_top_k:
+                    top_idx = sorted(valid_idx, key=lambda j: abs(row[j]), reverse=True)[:corr_top_k]
+                else:
+                    top_idx = valid_idx
+
+                for j in top_idx:
+                    w = row[j]
+                    if not np.isfinite(w) or abs(w) < corr_thr:
+                        continue
+                    w_abs = float(abs(w))
+                    edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), w_abs)
+                    edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), w_abs)
+
+        # 2) sector edges (reduced weight, structural prior)
+        if use_sector and sector_weight > 0:
+            for i in range(n_nodes):
+                ti = tickers_list[i]
+                si = sector_map.get(ti)
+                if si is None or (isinstance(si, float) and np.isnan(si)):
+                    continue
+                for j in range(i + 1, n_nodes):
+                    tj = tickers_list[j]
+                    sj = sector_map.get(tj)
+                    if sj is None or (isinstance(sj, float) and np.isnan(sj)):
+                        continue
+                    if si == sj:
+                        edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), sector_weight)
+                        edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), sector_weight)
+
+        # 3) industry edges (reduced weight, structural prior)
+        if use_industry and industry_weight > 0:
+            for i in range(n_nodes):
+                ti = tickers_list[i]
+                ii = industry_map.get(ti)
+                if ii is None or (isinstance(ii, float) and np.isnan(ii)):
+                    continue
+                for j in range(i + 1, n_nodes):
+                    tj = tickers_list[j]
+                    ij = industry_map.get(tj)
+                    if ij is None or (isinstance(ij, float) and np.isnan(ij)):
+                        continue
+                    if ii == ij:
+                        edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), industry_weight)
+                        edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), industry_weight)
 
         if not edge_dict:
             # no edges, skip this day
@@ -215,21 +223,28 @@ def _build_snapshots_and_targets(config):
         edge_index = edge_index[:, mask_edge]
         edge_weight = edge_weight[mask_edge]
 
+        # diagnostics to catch edge explosion
+        num_edges = edge_index.shape[1]
+        deg = torch.bincount(edge_index[0], minlength=n_nodes)
+        avg_deg = float(deg.float().mean().item()) if len(deg) > 0 else 0.0
+        max_deg = int(deg.max().item()) if len(deg) > 0 else 0
+        print(f"[graph] {d.date()} nodes={n_nodes} edges={num_edges} avg_deg={avg_deg:.2f} max_deg={max_deg}")
+
         # build PyG Data object
         x_tensor = torch.tensor(x, dtype=torch.float32)
-        y_tensor = torch.tensor(y_cls, dtype=torch.float32)
         y_ret_tensor = torch.tensor(y_ret, dtype=torch.float32)
+        valid_mask_tensor = torch.tensor(valid_mask, dtype=torch.bool)
 
         graph = Data(
             x=x_tensor,
             edge_index=edge_index,
             edge_weight=edge_weight,
-            y=y_tensor,
+            y=y_ret_tensor,
         )
         graph.y_ret = y_ret_tensor
         graph.tickers = tickers_list
         graph.date = d
-        graph.valid_mask = torch.ones(n_nodes, dtype=torch.bool)
+        graph.valid_mask = valid_mask_tensor
 
         snapshots.append(graph)
         meta_dates.append(d)
@@ -304,13 +319,14 @@ def _train_static_gnn(config):
         lr=config["training"]["lr"],
         weight_decay=config["training"]["weight_decay"],
     )
-    loss_fn = torch.nn.BCEWithLogitsLoss()
+    loss_fn = torch.nn.MSELoss()
 
     best_val = float("inf")
     bad_epochs = 0
     patience = config["training"]["patience"]
 
-    out_dir = Path(config["evaluation"]["out_dir"])
+    # Write outputs under evaluation.out_dir / model_name to avoid collisions
+    out_dir = Path(config["evaluation"]["out_dir"]) / config["model"]["type"]
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / f"best_{config['model']['type']}.pt"
 
@@ -324,7 +340,7 @@ def _train_static_gnn(config):
             logits = model(batch.x, batch.edge_index, batch.edge_weight)
 
             # simple mask: only finite labels
-            mask = torch.isfinite(batch.y)
+            mask = batch.valid_mask & torch.isfinite(batch.y)
             if mask.sum() == 0:
                 continue
 
@@ -343,7 +359,7 @@ def _train_static_gnn(config):
             for batch in val_loader:
                 batch = batch.to(device)
                 logits = model(batch.x, batch.edge_index, batch.edge_weight)
-                mask = torch.isfinite(batch.y)
+                mask = batch.valid_mask & torch.isfinite(batch.y)
                 if mask.sum() == 0:
                     continue
                 loss = loss_fn(logits[mask], batch.y[mask])
@@ -378,7 +394,8 @@ def _train_static_gnn(config):
             batch = batch.to(device)
             logits = model(batch.x, batch.edge_index, batch.edge_weight)
             pred = logits.cpu().numpy()
-            y_ret = batch.y_ret.cpu().numpy()
+            y_ret = batch.y.cpu().numpy()
+            valid = batch.valid_mask.cpu().numpy()
             tickers_raw = batch.tickers
 
             if isinstance(tickers_raw, list) and len(tickers_raw) > 0:
@@ -398,7 +415,7 @@ def _train_static_gnn(config):
             d = pd.to_datetime(d)
 
             for i, t in enumerate(tickers):
-                if not np.isfinite(y_ret[i]):
+                if not valid[i] or not np.isfinite(y_ret[i]):
                     continue
                 rows.append({
                     "date": d,
@@ -419,6 +436,9 @@ def _train_static_gnn(config):
     daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
     daily_metrics.to_csv(out_dir / f"{config['model']['type']}_daily_metrics.csv", index=False)
 
+    plot_daily_ic(daily_metrics, out_dir / f"{config['model']['type']}_ic_timeseries.png")
+    plot_ic_hist(daily_metrics, out_dir / f"{config['model']['type']}_ic_histogram.png")
+
     print(
         f"{config['model']['type'].upper()} mean IC",
         daily_metrics["ic"].mean(),
@@ -426,7 +446,7 @@ def _train_static_gnn(config):
         daily_metrics["hit"].mean(),
     )
 
-    equity_curve, daily_ret, stats = backtest_long_short(
+    equity_curve, daily_ret, stats = backtest_long_only(
         pred_df,
         top_k=config["evaluation"]["top_k"],
         transaction_cost_bps=config["evaluation"]["transaction_cost_bps"],
@@ -435,10 +455,33 @@ def _train_static_gnn(config):
     equity_curve.to_csv(out_dir / f"{config['model']['type']}_equity_curve.csv", header=["value"])
     plot_equity_curve(
         equity_curve,
-        f"{config['model']['type'].upper()} long short",
+        f"{config['model']['type'].upper()} long only",
         out_dir / f"{config['model']['type']}_equity_curve.png",
     )
+
+    # Buy-and-hold baseline for the same window
+    bh_df = pred_df[["date", "ticker", "realized_ret"]].rename(columns={"realized_ret": "log_ret_1d"})
+    eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
+        bh_df,
+        risk_free_rate=config["evaluation"]["risk_free_rate"],
+    )
+    eq_bh.to_csv(out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.csv", header=["value"])
+    plot_equity_curve(
+        eq_bh,
+        "Buy and Hold",
+        out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.png",
+    )
+
+    # Combined comparison plot
+    plot_equity_comparison(
+        model_curve=equity_curve,
+        bh_curve=eq_bh,
+        title=f"{config['model']['type'].upper()} vs Buy and Hold",
+        out_path=out_dir / f"{config['model']['type']}_equity_comparison.png",
+    )
+
     print(f"{config['model']['type'].upper()} backtest stats", stats)
+    print("Buy-and-hold stats", stats_bh)
 
 
 # 2. Training for temporal TGCN
@@ -480,13 +523,13 @@ def _train_tgcn(config):
         lr=config["training"]["lr"],
         weight_decay=config["training"]["weight_decay"],
     )
-    loss_fn = torch.nn.BCEWithLogitsLoss()
+    loss_fn = torch.nn.MSELoss()
 
     best_val = float("inf")
     bad_epochs = 0
     patience = config["training"]["patience"]
 
-    out_dir = Path(config["evaluation"]["out_dir"])
+    out_dir = Path(config["evaluation"]["out_dir"]) / config["model"]["type"]
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / "best_tgcn.pt"
 
@@ -505,7 +548,7 @@ def _train_tgcn(config):
             logits, h = model(g.x, g.edge_index, g.edge_weight, h)
             h = h.detach()
 
-            mask = torch.isfinite(g.y)
+            mask = g.valid_mask & torch.isfinite(g.y)
             if mask.sum() == 0:
                 continue
 
@@ -528,7 +571,7 @@ def _train_tgcn(config):
                 g = g.to(device)
                 logits, h_val = model(g.x, g.edge_index, g.edge_weight, h_val)
                 h_val = h_val.detach()
-                mask = torch.isfinite(g.y)
+                mask = g.valid_mask & torch.isfinite(g.y)
                 if mask.sum() == 0:
                     continue
                 loss = loss_fn(logits[mask], g.y[mask])
@@ -564,12 +607,13 @@ def _train_tgcn(config):
             logits, h_test = model(g.x, g.edge_index, g.edge_weight, h_test)
             h_test = h_test.detach()
             pred = logits.cpu().numpy()
-            y_realized = g.y_ret.cpu().numpy()
+            y_realized = g.y.cpu().numpy()
+            valid = g.valid_mask.cpu().numpy()
             tickers = g.tickers
             d = pd.to_datetime(g.date)
 
             for i, t in enumerate(tickers):
-                if not np.isfinite(y_realized[i]):
+                if not valid[i] or not np.isfinite(y_realized[i]):
                     continue
                 rows.append(
                     {
@@ -601,10 +645,12 @@ def _train_tgcn(config):
     mean_hit = daily_metrics["hit"].dropna().mean()
 
     daily_metrics.to_csv(out_dir / "tgcn_daily_metrics.csv", index=False)
+    plot_daily_ic(daily_metrics, out_dir / "tgcn_ic_timeseries.png")
+    plot_ic_hist(daily_metrics, out_dir / "tgcn_ic_histogram.png")
     print("TGCN mean IC", mean_ic)
     print("TGCN mean hit", mean_hit)
 
-    curve, daily_ret, stats = backtest_long_short(
+    curve, daily_ret, stats = backtest_long_only(
         pred_df,
         top_k=config["evaluation"]["top_k"],
         transaction_cost_bps=config["evaluation"]["transaction_cost_bps"],
@@ -613,10 +659,31 @@ def _train_tgcn(config):
     curve.to_csv(out_dir / "tgcn_equity_curve.csv", header=["value"])
     plot_equity_curve(
         curve,
-        "TGCN long short",
+        "TGCN long only",
         out_dir / "tgcn_equity_curve.png",
     )
+
+    bh_df = pred_df[["date", "ticker", "realized_ret"]].rename(columns={"realized_ret": "log_ret_1d"})
+    eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
+        bh_df,
+        risk_free_rate=config["evaluation"]["risk_free_rate"],
+    )
+    eq_bh.to_csv(out_dir / "tgcn_buy_and_hold_equity_curve.csv", header=["value"])
+    plot_equity_curve(
+        eq_bh,
+        "Buy and Hold",
+        out_dir / "tgcn_buy_and_hold_equity_curve.png",
+    )
+
+    plot_equity_comparison(
+        model_curve=curve,
+        bh_curve=eq_bh,
+        title="TGCN vs Buy and Hold",
+        out_path=out_dir / "tgcn_equity_comparison.png",
+    )
+
     print("TGCN backtest stats", stats)
+    print("Buy-and-hold stats", stats_bh)
 
 
 # public entry from train.py
