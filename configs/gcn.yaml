@@ -11,4 +11,4 @@ model:
 include: "configs/default.yaml"
 
 data:
-  target_horizon: 5  # weekly horizon to reduce noise for GCN
+  target_horizon: 1  

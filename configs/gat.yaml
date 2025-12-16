@@ -3,10 +3,14 @@ experiment_name: gat
 model:
   family: gnn
   type: gat
-  input_dim: 32
-  hidden_dim: 128
-  num_layers: 3
+  hidden_dim_candidates: [32, 64]
+  hidden_dim: 64
+  num_layers: 1
   dropout: 0.1
-  heads: 4
+  heads: 1
 
 include: "configs/default.yaml"
+
+# Lower learning rate for GAT for stability
+training:
+  lr: 0.0003

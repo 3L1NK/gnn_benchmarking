@@ -350,7 +350,7 @@ def _train_static_gnn(config):
     loss_fn = torch.nn.MSELoss()
     hidden_candidates = config["model"].get("hidden_dim_candidates", [32, 64])
     hidden_candidates = list(dict.fromkeys(hidden_candidates))
-    num_layers = 1  # force shallow GCN to reduce over-smoothing
+    num_layers = 1  # force shallow GNN to reduce over-smoothing
 
     patience_cfg = config["training"]["patience"]
     patience = max(patience_cfg * 2, patience_cfg + 20)
@@ -361,6 +361,8 @@ def _train_static_gnn(config):
     best_state = None
     best_hidden = None
 
+    heads_cfg = config["model"].get("heads", 1)
+
     for hidden_dim in hidden_candidates:
         print(f"[{config['model']['type'].upper()}] training candidate hidden_dim={hidden_dim}")
         model = StaticGNN(
@@ -369,6 +371,7 @@ def _train_static_gnn(config):
             hidden_dim=hidden_dim,
             num_layers=num_layers,
             dropout=config["model"]["dropout"],
+            heads=heads_cfg,
         ).to(device)
 
         optimizer = torch.optim.Adam(
@@ -445,6 +448,7 @@ def _train_static_gnn(config):
         hidden_dim=best_hidden,
         num_layers=num_layers,
         dropout=config["model"]["dropout"],
+        heads=heads_cfg,
     ).to(device)
     model.load_state_dict(best_state)
     model.eval()
