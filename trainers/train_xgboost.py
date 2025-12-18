@@ -152,11 +152,23 @@ class XGBoostTrainer:
         key = self.config["model"]["type"].lower()
 
         # global buy-and-hold baseline (cached, model independent)
-        self.bh_curve, self.bh_ret, self.bh_stats = get_global_buy_and_hold(
+        eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
             self.config,
             rebuild=self.rebuild_cache,
         )
-        print("[baseline] global buy-and-hold stats", self.bh_stats)
+        # align to test window for fair comparison
+        test_start = pd.to_datetime(self.config["training"]["test_start"])
+        mask_bh = eq_bh_full.index >= test_start
+        self.bh_curve = eq_bh_full
+        self.bh_ret = ret_bh_full
+        from utils.metrics import sharpe_ratio, sortino_ratio
+        stats_bh_window = {
+            "final_value": float(eq_bh_full.loc[mask_bh].iloc[-1]) if mask_bh.any() else float("nan"),
+            "sharpe": sharpe_ratio(ret_bh_full[mask_bh], self.config["evaluation"]["risk_free_rate"]),
+            "sortino": sortino_ratio(ret_bh_full[mask_bh], self.config["evaluation"]["risk_free_rate"]),
+        }
+        self.bh_stats = stats_bh_window
+        print("[baseline] global buy-and-hold stats (test window)", stats_bh_window)
 
         try:
             result = self._registry[key]()   # train the chosen XGB variant
@@ -526,7 +538,10 @@ class XGBoostTrainer:
             if t not in ticker_to_idx:
                 continue
 
-            f = row[self.feat_cols].values.astype(float)
+            available_cols = [c for c in self.feat_cols if c in row.index]
+            if not available_cols:
+                continue
+            f = row[available_cols].values.astype(float)
             vec = emb_matrix[ticker_to_idx[t]]
             full_feat = np.concatenate([f, vec])
 
