@@ -14,3 +14,6 @@ include: "configs/default.yaml"
 # Lower learning rate for GAT for stability
 training:
   lr: 0.0003
+
+data:
+  target_horizon: 5  # weekly horizon for consistency

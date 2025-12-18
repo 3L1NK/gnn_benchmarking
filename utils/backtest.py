@@ -32,10 +32,11 @@ def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
     return eq_series, port_ret, stats
 
 
-def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate=0.0):
+def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate=0.0, rebalance_freq=5):
     """
     pred_df columns: date, ticker, pred, realized_ret
-    Long only top_k portfolio, equal weight, daily rebalancing.
+    Long only top_k portfolio, equal weight, rebalancing every `rebalance_freq` days (default 5).
+    Positions are held between rebalances; transaction costs apply on rebalance days.
     """
 
     df = pred_df.copy()
@@ -51,44 +52,45 @@ def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate
 
     prev_weights = {}
 
-    for d in dates:
+    for i, d in enumerate(dates):
         day_df = df[df["date"] == d]
         if day_df.empty:
             continue
 
-        day_df = day_df.sort_values("pred", ascending=False)
-
-        long = day_df.head(top_k)
-
-        # equal weight only on long side
-        w_long = 1.0 / max(len(long), 1)
-
-        new_weights = {t: w_long for t in long["ticker"]}
-
-        # turnover
-        turnover = 0.0
-        tickers = set(new_weights.keys()) | set(prev_weights.keys())
-        for t in tickers:
-            old_w = prev_weights.get(t, 0.0)
-            new_w = new_weights.get(t, 0.0)
-            turnover += abs(new_w - old_w)
-        daily_turnover.append(turnover)
-
-        transaction_cost = turnover * (transaction_cost_bps / 10000.0)
-
         todays_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+        transaction_cost = 0.0
 
-        r = 0.0
-        for t, w in new_weights.items():
-            r += w * todays_ret.get(t, 0.0)
+        # Rebalance on schedule; otherwise hold previous weights
+        if (i % rebalance_freq) == 0 or not prev_weights:
+            day_df = day_df.sort_values("pred", ascending=False)
+            long = day_df.head(top_k)
 
+            w_long = 1.0 / max(len(long), 1)
+            new_weights = {t: w_long for t in long["ticker"]}
+
+            turnover = 0.0
+            tickers = set(new_weights.keys()) | set(prev_weights.keys())
+            for t in tickers:
+                old_w = prev_weights.get(t, 0.0)
+                new_w = new_weights.get(t, 0.0)
+                turnover += abs(new_w - old_w)
+            daily_turnover.append(turnover)
+
+            transaction_cost = turnover * (transaction_cost_bps / 10000.0)
+            prev_weights = new_weights
+        else:
+            # hold weights, no turnover
+            if daily_turnover:
+                daily_turnover.append(0.0)
+            else:
+                daily_turnover.append(0.0)
+
+        r = sum(prev_weights.get(t, 0.0) * todays_ret.get(t, 0.0) for t in prev_weights)
         r_net = r - transaction_cost
 
         equity *= (1 + r_net)
         equity_curve.append((d, equity))
         daily_returns.append(r_net)
-
-        prev_weights = new_weights
 
     eq_series = pd.Series(
         [v for _, v in equity_curve],

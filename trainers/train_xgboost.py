@@ -363,6 +363,16 @@ class XGBoostTrainer:
         val_start = pd.to_datetime(self.config["training"]["val_start"])
         train_df = self.df[self.df["date"] < val_start]
 
+        # universe metadata for sector / industry priors
+        universe_path = Path("data/processed/universe.csv")
+        if not universe_path.exists():
+            raise FileNotFoundError("Universe metadata is required at data/processed/universe.csv")
+        universe_df = pd.read_csv(universe_path)
+        sector_map = dict(zip(universe_df["ticker"], universe_df.get("sector", pd.Series(index=universe_df.index))))
+        industry_map = dict(zip(universe_df["ticker"], universe_df.get("industry", pd.Series(index=universe_df.index))))
+        sector_weight = 0.2
+        industry_weight = 0.1
+
         last_train_date = train_df["date"].max()
         corr_window = self.config["data"]["lookback_window"]
         corr_thr = self.config["data"].get("corr_threshold", 0.4)
@@ -374,25 +384,84 @@ class XGBoostTrainer:
             corr_thr,
         )
 
-        G = nx.Graph()
+        graph_mode = self.config["model"].get("graph_mode", "correlation")  # "correlation" or "combined"
+
+        # build weighted static graph combining correlation + optional sector/industry
+        tickers_train = sorted(train_df["ticker"].unique())
+        weight_map = {}
+
+        def add_edge(u, v, w):
+            if u == v:
+                return
+            key = tuple(sorted((u, v)))
+            weight_map[key] = weight_map.get(key, 0.0) + float(w)
+
+        # correlation edges
         for u, v, w in edges:
-            G.add_edge(u, v, weight=abs(w))
+            add_edge(u, v, abs(w))
+
+        if graph_mode == "combined":
+            # sector edges (weak prior)
+            sector_groups = {}
+            for t in tickers_train:
+                s = sector_map.get(t)
+                if s is None or (isinstance(s, float) and np.isnan(s)):
+                    continue
+                sector_groups.setdefault(s, []).append(t)
+            for _, lst in sector_groups.items():
+                for i in range(len(lst)):
+                    for j in range(i + 1, len(lst)):
+                        add_edge(lst[i], lst[j], sector_weight)
+
+            # industry edges (even weaker prior)
+            industry_groups = {}
+            for t in tickers_train:
+                ind = industry_map.get(t)
+                if ind is None or (isinstance(ind, float) and np.isnan(ind)):
+                    continue
+                industry_groups.setdefault(ind, []).append(t)
+            for _, lst in industry_groups.items():
+                for i in range(len(lst)):
+                    for j in range(i + 1, len(lst)):
+                        add_edge(lst[i], lst[j], industry_weight)
+
+        if not weight_map:
+            raise ValueError("No edges in combined graph. Check data or thresholds.")
+
+        # normalize weights to [0,1]
+        max_w = max(weight_map.values())
+        norm_weights = {k: (v / max_w) for k, v in weight_map.items()}
+
+        G = nx.Graph()
+        G.add_nodes_from(tickers_train)
+        for (u, v), w in norm_weights.items():
+            G.add_edge(u, v, weight=w)
+
+        edges_list = list(G.edges())
+        if len(edges_list) == 0:
+            raise ValueError("No edges in combined graph after normalization.")
 
         tickers = list(G.nodes())
         ticker_to_idx = {t: i for i, t in enumerate(tickers)}
 
-        if len(G.edges()) == 0:
-            raise ValueError("No edges in correlation graph. Increase corr_threshold or check data.")
+        # Node2Vec in PyG does not use edge weights directly, so we approximate
+        # weights via edge multiplicity in the walk graph. Stronger edges appear
+        # more times, increasing their sampling probability.
+        edge_pairs = []
+        for (u, v) in edges_list:
+            w = G[u][v].get("weight", 1.0)
+            mult = max(1, int(round(w * 10)))  # up to 10 duplicates since w <= 1
+            edge_pairs.extend([(u, v)] * mult)
 
         edge_index = torch.tensor(
-            [[ticker_to_idx[u] for u, v in G.edges()],
-             [ticker_to_idx[v] for u, v in G.edges()]],
+            [[ticker_to_idx[u] for u, v in edge_pairs],
+             [ticker_to_idx[v] for u, v in edge_pairs]],
             dtype=torch.long,
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        emb_dim = self.config["model"].get("embedding_dim", 16)
+        emb_dim = self.config["model"].get("embedding_dim", 8)  # smaller to keep embeddings as weak priors
         n2v = Node2Vec(
             edge_index=edge_index,
             embedding_dim=emb_dim,
@@ -414,6 +483,11 @@ class XGBoostTrainer:
                 optimizer.step()
 
         emb_matrix = n2v().detach().cpu().numpy()
+
+        # Standardize embeddings separately and scale down so they act as weak structural priors.
+        emb_mean = emb_matrix.mean(axis=0, keepdims=True)
+        emb_std = emb_matrix.std(axis=0, keepdims=True) + 1e-8
+        emb_matrix = 0.2 * (emb_matrix - emb_mean) / emb_std
 
         rows = []
         for _, row in self.df.iterrows():
@@ -640,4 +714,3 @@ def train_xgboost(config):
     """Entry point used by train.py."""
     trainer = XGBoostTrainer(config)
     trainer.run()
-

@@ -4,7 +4,7 @@ data:
   price_file: "data/processed/prices.parquet"
   start_date: "2000-01-01"
   end_date: "2024-12-31"
-  target_horizon: 1
+  target_horizon: 5   # weekly horizon for consistency across models
   lookback_window: 60
 
 tuning:
