@@ -17,6 +17,7 @@ from utils.plot import (
 )
 from utils.seeds import set_seed
 from utils.cache import cache_load, cache_save, cache_key, cache_path
+from utils.baseline import get_global_buy_and_hold
 from xgboost import XGBRegressor
 from itertools import product
 from sklearn.metrics import root_mean_squared_error
@@ -150,8 +151,12 @@ class XGBoostTrainer:
     def run(self):
         key = self.config["model"]["type"].lower()
 
-        # compute buy and hold first so it is available for comparison
-        self.bh_curve = self.run_buy_and_hold()
+        # global buy-and-hold baseline (cached, model independent)
+        self.bh_curve, self.bh_ret, self.bh_stats = get_global_buy_and_hold(
+            self.config,
+            rebuild=self.rebuild_cache,
+        )
+        print("[baseline] global buy-and-hold stats", self.bh_stats)
 
         try:
             result = self._registry[key]()   # train the chosen XGB variant
@@ -159,35 +164,6 @@ class XGBoostTrainer:
             raise ValueError(f"Unknown xgboost type {key}")
 
         return result
-
-    def run_buy_and_hold(self) -> pd.Series:
-        """
-        Equal weight buy and hold baseline on the same test period.
-        Uses log_ret_1d from the feature panel.
-        """
-
-        test_start = pd.to_datetime(self.config["training"]["test_start"])
-        end_date = pd.to_datetime(self.config["data"]["end_date"])
-
-        # slice test period
-        df_test = self.df[
-            (self.df["date"] >= test_start) & (self.df["date"] <= end_date)
-        ].copy()
-
-        # we only need date, ticker, log_ret_1d
-        price_panel = df_test[["date", "ticker", "log_ret_1d"]].copy()
-
-        eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
-            price_panel,
-            risk_free_rate=self.config["evaluation"]["risk_free_rate"],
-        )
-
-        # save curve
-        eq_bh.to_csv(self.out_dir / "buy_and_hold_equity_curve.csv", header=["value"])
-
-        print("[buy_and_hold] stats", stats_bh)
-        
-        return eq_bh
 
     def _evaluate_and_backtest(self, pred_df, name: str):
         daily_metrics = []
@@ -232,9 +208,13 @@ class XGBoostTrainer:
         )
         print(f"[{name}] backtest stats", stats)
         
+        # Align baseline to prediction window for plotting
+        start_d, end_d = pred_df["date"].min(), pred_df["date"].max()
+        bh_slice = self.bh_curve.loc[(self.bh_curve.index >= start_d) & (self.bh_curve.index <= end_d)]
+
         plot_equity_comparison(
             model_curve=equity_curve,
-            bh_curve=self.bh_curve,     # store it inside trainer
+            bh_curve=bh_slice,
             title=f"{name}: Model vs Buy & Hold",
             out_path=self.out_dir / f"{name}_vs_buy_and_hold.png",
         )

@@ -15,7 +15,8 @@ from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
 from utils.metrics import rank_ic, hit_rate
-from utils.backtest import backtest_long_only, backtest_buy_and_hold
+from utils.backtest import backtest_long_only
+from utils.baseline import get_global_buy_and_hold
 from utils.plot import (
     plot_daily_ic,
     plot_ic_hist,
@@ -452,11 +453,15 @@ def train_gnn(config):
     )
     print(f"[{config['model']['type'].upper()}] Saved equity curve to {eq_path}")
 
-    bh_df = pred_df[["date", "ticker", "realized_ret"]].rename(columns={"realized_ret": "log_ret_1d"})
-    eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
-        bh_df,
-        risk_free_rate=config["evaluation"]["risk_free_rate"],
+    # Global buy-and-hold baseline
+    eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
+        config,
+        rebuild=config.get("cache", {}).get("rebuild", False),
     )
+    print("[baseline] global buy-and-hold stats", stats_bh)
+    start_d, end_d = pred_df["date"].min(), pred_df["date"].max()
+    eq_bh = eq_bh_full.loc[(eq_bh_full.index >= start_d) & (eq_bh_full.index <= end_d)]
+
     bh_path = out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.png"
     eq_bh.to_csv(out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.csv", header=["value"])
     plot_equity_curve(

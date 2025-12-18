@@ -16,7 +16,8 @@ from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
 from utils.metrics import rank_ic, hit_rate
-from utils.backtest import backtest_long_only, backtest_buy_and_hold
+from utils.backtest import backtest_long_only
+from utils.baseline import get_global_buy_and_hold
 from utils.plot import (
     plot_equity_curve,
     plot_equity_comparison,
@@ -413,16 +414,18 @@ def train_lstm(config):
 
     print("LSTM backtest stats:", stats)
 
-    # Buy-and-hold on the same test window for comparison
-    bh_df = pred_df[["date", "ticker", "realized_ret"]].rename(
-        columns={"realized_ret": "log_ret_1d"}
+    # Global buy-and-hold baseline (precomputed, model independent)
+    eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
+        config,
+        rebuild=config.get("cache", {}).get("rebuild", False),
     )
-    eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
-        bh_df,
-        risk_free_rate=config["evaluation"]["risk_free_rate"],
-    )
-    eq_bh.to_csv(out_dir / "lstm_buy_and_hold_equity_curve.csv", header=["value"])
+    print("[baseline] global buy-and-hold stats", stats_bh)
 
+    # align baseline to test window for plotting
+    start_d, end_d = pred_df["date"].min(), pred_df["date"].max()
+    eq_bh = eq_bh_full.loc[(eq_bh_full.index >= start_d) & (eq_bh_full.index <= end_d)]
+
+    eq_bh.to_csv(out_dir / "lstm_buy_and_hold_equity_curve.csv", header=["value"])
     plot_equity_curve(
         eq_bh,
         "Buy and Hold",
@@ -436,5 +439,3 @@ def train_lstm(config):
         "LSTM vs Buy and Hold",
         out_dir / "lstm_equity_comparison.png",
     )
-
-    print("Buy-and-hold stats:", stats_bh)
