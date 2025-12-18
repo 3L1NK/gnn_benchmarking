@@ -542,6 +542,13 @@ class XGBoostTrainer:
         X = np.stack(tab["features"].values)
         y = tab["target"].values.astype(float)
 
+        # time masks are needed even when loading cached splits
+        train_mask, val_mask, test_mask = _time_masks(
+            tab["date"],
+            self.config["training"]["val_start"],
+            self.config["training"]["test_start"],
+        )
+
         cache_id_feats = cache_key(
             {
                 "model": "xgb_node2vec_features",
@@ -562,12 +569,6 @@ class XGBoostTrainer:
             X_test, y_test = cached_feats["X_test"], cached_feats["y_test"]
             print(f"[xgb_node2vec] loaded feature splits from cache {feat_cache}")
         else:
-            train_mask, val_mask, test_mask = _time_masks(
-                tab["date"],
-                self.config["training"]["val_start"],
-                self.config["training"]["test_start"],
-            )
-
             X_train, y_train = X[train_mask], y[train_mask]
             X_val, y_val = X[val_mask], y[val_mask]
             X_test, y_test = X[test_mask], y[test_mask]
