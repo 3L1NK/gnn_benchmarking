@@ -8,8 +8,9 @@ import json
 import numpy as np
 import pandas as pd
 import torch
+from torch import amp
 from torch.utils.data import Dataset, DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import GradScaler
 
 from models.lstm_model import LSTMModel
 from utils.seeds import set_seed
@@ -223,7 +224,7 @@ def train_lstm(config):
                     xb = xb.to(device, non_blocking=True)
                     yb = yb.to(device, non_blocking=True)
                     optimizer.zero_grad()
-                    with autocast(enabled=use_cuda):
+                    with amp.autocast(device_type="cuda", enabled=use_cuda):
                         pred = model(xb)
                         loss = loss_fn(pred, yb)
                     scaler.scale(loss).backward()
@@ -234,7 +235,7 @@ def train_lstm(config):
 
                 model.eval()
                 val_losses = []
-                with torch.no_grad(), autocast(enabled=use_cuda):
+                with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
                     for xb, yb in val_loader:
                         xb = xb.to(device, non_blocking=True)
                         yb = yb.to(device, non_blocking=True)
@@ -310,7 +311,7 @@ def train_lstm(config):
             yb = yb.to(device, non_blocking=True)
 
             optimizer.zero_grad()
-            with autocast(enabled=use_cuda):
+            with amp.autocast(device_type="cuda", enabled=use_cuda):
                 pred = model(xb)
                 loss = loss_fn(pred, yb)
             scaler.scale(loss).backward()
@@ -325,7 +326,7 @@ def train_lstm(config):
 
         model.eval()
         val_losses = []
-        with torch.no_grad(), autocast(enabled=use_cuda):
+        with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
             for xb, yb in val_loader:
                 xb = xb.to(device, non_blocking=True)
                 yb = yb.to(device, non_blocking=True)
