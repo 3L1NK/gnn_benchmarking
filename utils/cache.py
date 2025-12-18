@@ -47,7 +47,8 @@ def cache_load(path):
         return None
     suffix = path.suffix.lower()
     if suffix in {".pt", ".pth"}:
-        return torch.load(path, map_location="cpu")
+        # We store arbitrary Python objects (not just weights), so allow full pickle.
+        return torch.load(path, map_location="cpu", weights_only=False)
     if suffix == ".npy":
         return np.load(path, allow_pickle=True)
     if suffix == ".joblib":
