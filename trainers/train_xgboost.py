@@ -16,6 +16,8 @@ from utils.plot import (
     plot_equity_comparison,
 )
 from utils.seeds import set_seed
+from utils.cache import cache_load, cache_save, cache_key, cache_path
+from utils.baseline import get_global_buy_and_hold
 from xgboost import XGBRegressor
 from itertools import product
 from sklearn.metrics import root_mean_squared_error
@@ -136,6 +138,7 @@ class XGBoostTrainer:
 
         self.out_dir = Path(config["evaluation"]["out_dir"])
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.rebuild_cache = config.get("cache", {}).get("rebuild", False)
 
         self._registry = {
             "xgb_raw": self.train_xgb_raw,
@@ -148,8 +151,24 @@ class XGBoostTrainer:
     def run(self):
         key = self.config["model"]["type"].lower()
 
-        # compute buy and hold first so it is available for comparison
-        self.bh_curve = self.run_buy_and_hold()
+        # global buy-and-hold baseline (cached, model independent)
+        eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
+            self.config,
+            rebuild=self.rebuild_cache,
+        )
+        # align to test window for fair comparison
+        test_start = pd.to_datetime(self.config["training"]["test_start"])
+        mask_bh = eq_bh_full.index >= test_start
+        self.bh_curve = eq_bh_full
+        self.bh_ret = ret_bh_full
+        from utils.metrics import sharpe_ratio, sortino_ratio
+        stats_bh_window = {
+            "final_value": float(eq_bh_full.loc[mask_bh].iloc[-1]) if mask_bh.any() else float("nan"),
+            "sharpe": sharpe_ratio(ret_bh_full[mask_bh], self.config["evaluation"]["risk_free_rate"]),
+            "sortino": sortino_ratio(ret_bh_full[mask_bh], self.config["evaluation"]["risk_free_rate"]),
+        }
+        self.bh_stats = stats_bh_window
+        print("[baseline] global buy-and-hold stats (test window)", stats_bh_window)
 
         try:
             result = self._registry[key]()   # train the chosen XGB variant
@@ -157,35 +176,6 @@ class XGBoostTrainer:
             raise ValueError(f"Unknown xgboost type {key}")
 
         return result
-
-    def run_buy_and_hold(self) -> pd.Series:
-        """
-        Equal weight buy and hold baseline on the same test period.
-        Uses log_ret_1d from the feature panel.
-        """
-
-        test_start = pd.to_datetime(self.config["training"]["test_start"])
-        end_date = pd.to_datetime(self.config["data"]["end_date"])
-
-        # slice test period
-        df_test = self.df[
-            (self.df["date"] >= test_start) & (self.df["date"] <= end_date)
-        ].copy()
-
-        # we only need date, ticker, log_ret_1d
-        price_panel = df_test[["date", "ticker", "log_ret_1d"]].copy()
-
-        eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
-            price_panel,
-            risk_free_rate=self.config["evaluation"]["risk_free_rate"],
-        )
-
-        # save curve
-        eq_bh.to_csv(self.out_dir / "buy_and_hold_equity_curve.csv", header=["value"])
-
-        print("[buy_and_hold] stats", stats_bh)
-        
-        return eq_bh
 
     def _evaluate_and_backtest(self, pred_df, name: str):
         daily_metrics = []
@@ -215,6 +205,8 @@ class XGBoostTrainer:
             "mean hit",
             daily_metrics["hit"].mean(),
         )
+        if name == "xgb_node2vec":
+            print("[xgb_node2vec] Note: static embeddings provided no temporal signal; no improvement observed vs raw XGB is expected.")
 
         equity_curve, daily_ret, stats = backtest_long_only(
             pred_df,
@@ -230,9 +222,13 @@ class XGBoostTrainer:
         )
         print(f"[{name}] backtest stats", stats)
         
+        # Align baseline to prediction window for plotting
+        start_d, end_d = pred_df["date"].min(), pred_df["date"].max()
+        bh_slice = self.bh_curve.loc[(self.bh_curve.index >= start_d) & (self.bh_curve.index <= end_d)]
+
         plot_equity_comparison(
             model_curve=equity_curve,
-            bh_curve=self.bh_curve,     # store it inside trainer
+            bh_curve=bh_slice,
             title=f"{name}: Model vs Buy & Hold",
             out_path=self.out_dir / f"{name}_vs_buy_and_hold.png",
         )
@@ -253,9 +249,33 @@ class XGBoostTrainer:
         X = self.df[self.feat_cols].values.astype(float)
         y = self.df["target"].values.astype(float)
 
-        X_train, y_train = X[train_mask], y[train_mask]
-        X_val,   y_val   = X[val_mask],   y[val_mask]
-        X_test,  y_test  = X[test_mask],  y[test_mask]
+        cache_id = cache_key(
+            {
+                "model": "xgb_raw",
+                "params": self.config["model"],
+                "data": self.config["data"],
+                "training": self.config["training"],
+            },
+            dataset_version="xgb_raw",
+            extra_files=[self.config["data"]["price_file"]],
+        )
+        cache_file = cache_path("xgb_raw", cache_id)
+        cached = None if self.rebuild_cache else cache_load(cache_file)
+        if cached is not None:
+            X_train, y_train = cached["X_train"], cached["y_train"]
+            X_val, y_val = cached["X_val"], cached["y_val"]
+            X_test, y_test = cached["X_test"], cached["y_test"]
+            print(f"[xgb_raw] loaded splits from cache {cache_file}")
+        else:
+            X_train, y_train = X[train_mask], y[train_mask]
+            X_val,   y_val   = X[val_mask],   y[val_mask]
+            X_test,  y_test  = X[test_mask],  y[test_mask]
+            cache_save(cache_file, {
+                "X_train": X_train, "y_train": y_train,
+                "X_val": X_val, "y_val": y_val,
+                "X_test": X_test, "y_test": y_test,
+            })
+            print(f"[xgb_raw] saved splits to cache {cache_file}")
 
         # -----------------------
         # 2. Read config
@@ -352,6 +372,8 @@ class XGBoostTrainer:
         """
         XGBoost model with Node2Vec embeddings using PyTorch Geometric.
         This avoids nodevectors and avoids old networkx, so it is stable with numpy 2.
+        Note: embeddings are static structural features; they add no temporal signal.
+        Expect no material improvement vs raw XGB; serves as a structural baseline.
         """
         import torch
         import networkx as nx
@@ -459,30 +481,51 @@ class XGBoostTrainer:
             dtype=torch.long,
         )
 
+        cache_id = cache_key(
+            {
+                "model": "xgb_node2vec",
+                "graph_mode": graph_mode,
+                "emb_dim": self.config["model"].get("embedding_dim", 8),
+                "data": self.config["data"],
+                "training": self.config["training"],
+            },
+            dataset_version="xgb_node2vec",
+            extra_files=[self.config["data"]["price_file"], universe_path],
+        )
+        emb_cache = cache_path("xgb_node2vec_emb", cache_id)
+
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        emb_dim = self.config["model"].get("embedding_dim", 8)  # smaller to keep embeddings as weak priors
-        n2v = Node2Vec(
-            edge_index=edge_index,
-            embedding_dim=emb_dim,
-            walk_length=40,
-            context_size=20,
-            walks_per_node=10,
-            num_negative_samples=1,
-            sparse=True,
-        ).to(device)
+        cached_emb = None if self.rebuild_cache else cache_load(emb_cache)
+        if cached_emb is not None:
+            emb_matrix = cached_emb["emb_matrix"]
+            ticker_to_idx = cached_emb["ticker_to_idx"]
+            print(f"[xgb_node2vec] loaded embeddings from cache {emb_cache}")
+        else:
+            emb_dim = self.config["model"].get("embedding_dim", 8)  # smaller to keep embeddings as weak priors
+            n2v = Node2Vec(
+                edge_index=edge_index,
+                embedding_dim=emb_dim,
+                walk_length=40,
+                context_size=20,
+                walks_per_node=10,
+                num_negative_samples=1,
+                sparse=True,
+            ).to(device)
 
-        loader = n2v.loader(batch_size=128, shuffle=True)
-        optimizer = torch.optim.SparseAdam(n2v.parameters(), lr=0.01)
+            loader = n2v.loader(batch_size=128, shuffle=True)
+            optimizer = torch.optim.SparseAdam(n2v.parameters(), lr=0.01)
 
-        for _ in range(30):
-            for pos_rw, neg_rw in loader:
-                optimizer.zero_grad()
-                loss = n2v.loss(pos_rw.to(device), neg_rw.to(device))
-                loss.backward()
-                optimizer.step()
+            for _ in range(30):
+                for pos_rw, neg_rw in loader:
+                    optimizer.zero_grad()
+                    loss = n2v.loss(pos_rw.to(device), neg_rw.to(device))
+                    loss.backward()
+                    optimizer.step()
 
-        emb_matrix = n2v().detach().cpu().numpy()
+            emb_matrix = n2v().detach().cpu().numpy()
+            cache_save(emb_cache, {"emb_matrix": emb_matrix, "ticker_to_idx": ticker_to_idx})
+            print(f"[xgb_node2vec] saved embeddings to cache {emb_cache}")
 
         # Standardize embeddings separately and scale down so they act as weak structural priors.
         emb_mean = emb_matrix.mean(axis=0, keepdims=True)
@@ -495,7 +538,10 @@ class XGBoostTrainer:
             if t not in ticker_to_idx:
                 continue
 
-            f = row[self.feat_cols].values.astype(float)
+            available_cols = [c for c in self.feat_cols if c in row.index]
+            if not available_cols:
+                continue
+            f = row[available_cols].values.astype(float)
             vec = emb_matrix[ticker_to_idx[t]]
             full_feat = np.concatenate([f, vec])
 
@@ -511,15 +557,43 @@ class XGBoostTrainer:
         X = np.stack(tab["features"].values)
         y = tab["target"].values.astype(float)
 
+        # time masks are needed even when loading cached splits
         train_mask, val_mask, test_mask = _time_masks(
             tab["date"],
             self.config["training"]["val_start"],
             self.config["training"]["test_start"],
         )
 
-        X_train, y_train = X[train_mask], y[train_mask]
-        X_val, y_val = X[val_mask], y[val_mask]
-        X_test, y_test = X[test_mask], y[test_mask]
+        cache_id_feats = cache_key(
+            {
+                "model": "xgb_node2vec_features",
+                "graph_mode": graph_mode,
+                "data": self.config["data"],
+                "training": self.config["training"],
+                "emb_dim": self.config["model"].get("embedding_dim", 8),
+            },
+            dataset_version="xgb_node2vec_features",
+            extra_files=[self.config["data"]["price_file"], universe_path],
+        )
+        feat_cache = cache_path("xgb_node2vec_feats", cache_id_feats)
+        cached_feats = None if self.rebuild_cache else cache_load(feat_cache)
+
+        if cached_feats is not None:
+            X_train, y_train = cached_feats["X_train"], cached_feats["y_train"]
+            X_val, y_val = cached_feats["X_val"], cached_feats["y_val"]
+            X_test, y_test = cached_feats["X_test"], cached_feats["y_test"]
+            print(f"[xgb_node2vec] loaded feature splits from cache {feat_cache}")
+        else:
+            X_train, y_train = X[train_mask], y[train_mask]
+            X_val, y_val = X[val_mask], y[val_mask]
+            X_test, y_test = X[test_mask], y[test_mask]
+
+            cache_save(feat_cache, {
+                "X_train": X_train, "y_train": y_train,
+                "X_val": X_val, "y_val": y_val,
+                "X_test": X_test, "y_test": y_test,
+            })
+            print(f"[xgb_node2vec] saved feature splits to cache {feat_cache}")
 
         model = XGBRegressor(
             n_estimators=600,
