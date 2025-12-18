@@ -193,6 +193,8 @@ class XGBoostTrainer:
             "mean hit",
             daily_metrics["hit"].mean(),
         )
+        if name == "xgb_node2vec":
+            print("[xgb_node2vec] Note: static embeddings provided no temporal signal; no improvement observed vs raw XGB is expected.")
 
         equity_curve, daily_ret, stats = backtest_long_only(
             pred_df,
@@ -358,6 +360,8 @@ class XGBoostTrainer:
         """
         XGBoost model with Node2Vec embeddings using PyTorch Geometric.
         This avoids nodevectors and avoids old networkx, so it is stable with numpy 2.
+        Note: embeddings are static structural features; they add no temporal signal.
+        Expect no material improvement vs raw XGB; serves as a structural baseline.
         """
         import torch
         import networkx as nx
