@@ -22,6 +22,7 @@ class StaticGNN(nn.Module):
         num_layers: int,
         dropout: float = 0.0,
         heads: int = 4,
+        use_residual: bool = True,
     ):
         super().__init__()
 
@@ -32,13 +33,14 @@ class StaticGNN(nn.Module):
         self.gnn_type = gnn_type
         self.activation = nn.ReLU()
         self.dropout = nn.Dropout(dropout)
+        self.use_residual = use_residual
 
         convs = []
         in_dim = input_dim
 
-        # GAT is forced to 1 layer and limited heads to reduce over-smoothing
+        # keep shallow to avoid over-smoothing
+        num_layers = max(1, min(num_layers, 2))
         if self.gnn_type == "gat":
-            num_layers = 1
             heads = max(1, min(heads, 2))
 
         for layer in range(num_layers):
@@ -60,10 +62,12 @@ class StaticGNN(nn.Module):
         for conv in self.convs:
             # edge_weight is only used by GCNConv, GATConv ignores it
             if self.gnn_type == "gcn" and edge_weight is not None:
-                x = conv(x, edge_index, edge_weight)
+                out = conv(x, edge_index, edge_weight)
             else:
-                x = conv(x, edge_index)
-            x = self.activation(x)
+                out = conv(x, edge_index)
+            if self.use_residual and out.shape == x.shape:
+                out = out + x
+            x = self.activation(out)
             x = self.dropout(x)
 
         out = self.head(x).squeeze(-1)

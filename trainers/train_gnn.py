@@ -6,9 +6,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from torch import amp
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader as GeoDataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import GradScaler
 
 from models.gnn_model import StaticGNN
 from utils.seeds import set_seed
@@ -317,9 +318,10 @@ def train_gnn(config):
         gnn_type=config["model"]["type"],
         input_dim=len(feat_cols),
         hidden_dim=config["model"]["hidden_dim"],
-        num_layers=config["model"]["num_layers"],
+        num_layers=min(config["model"]["num_layers"], 2),
         dropout=config["model"]["dropout"],
         heads=config["model"].get("heads", 1),
+        use_residual=True,
     ).to(device)
 
     optimizer = torch.optim.Adam(
@@ -347,7 +349,7 @@ def train_gnn(config):
         for batch in train_loader:
             batch = batch.to(device, non_blocking=True)
             optimizer.zero_grad()
-            with autocast(enabled=use_cuda):
+            with amp.autocast(device_type="cuda", enabled=use_cuda):
                 logits = model(batch.x, batch.edge_index, batch.edge_weight)
                 mask = batch.valid_mask & torch.isfinite(batch.y)
                 if mask.sum() == 0:
@@ -362,7 +364,7 @@ def train_gnn(config):
 
         model.eval()
         val_losses = []
-        with torch.no_grad(), autocast(enabled=use_cuda):
+        with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
             for batch in val_loader:
                 batch = batch.to(device, non_blocking=True)
                 logits = model(batch.x, batch.edge_index, batch.edge_weight)
@@ -393,7 +395,7 @@ def train_gnn(config):
     model.eval()
 
     rows = []
-    with torch.no_grad(), autocast(enabled=use_cuda):
+    with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
         for batch in test_loader:
             batch = batch.to(device, non_blocking=True)
             logits = model(batch.x, batch.edge_index, batch.edge_weight)
@@ -401,13 +403,24 @@ def train_gnn(config):
             y_ret = batch.y.cpu().numpy()
             valid = batch.valid_mask.cpu().numpy()
             tickers_raw = batch.tickers
+            tickers = []
             if isinstance(tickers_raw, list):
-                tickers = tickers_raw
+                for item in tickers_raw:
+                    if isinstance(item, (list, tuple, np.ndarray)):
+                        tickers.extend(list(item))
+                    else:
+                        tickers.append(item)
             else:
                 tickers = list(tickers_raw)
-            d = pd.to_datetime(batch.date[0] if hasattr(batch, "date") and isinstance(batch.date, (list, np.ndarray)) else batch.date)
+            tickers = [str(t) for t in tickers]
+            d = batch.date
+            if isinstance(d, (list, np.ndarray, pd.DatetimeIndex)):
+                d = d[0]
+            d = pd.to_datetime(d)
 
             for i, t in enumerate(tickers):
+                if i >= len(valid):
+                    break
                 if not valid[i] or not np.isfinite(y_ret[i]):
                     continue
                 rows.append({
@@ -416,13 +429,21 @@ def train_gnn(config):
                     "pred": float(pred[i]),
                     "realized_ret": float(y_ret[i]),
                 })
+            # log stats to diagnose collapse
+            if len(pred) > 0:
+                print(f"[{config['model']['type'].upper()}] test day {d.date()} pred mean {float(np.mean(pred)):.6f} std {float(np.std(pred)):.6f}")
 
     pred_df = pd.DataFrame(rows)
     pred_df.to_csv(out_dir / f"{config['model']['type']}_predictions.csv", index=False)
 
     daily_metrics = []
     for d, g in pred_df.groupby("date"):
-        ic = rank_ic(g["pred"], g["realized_ret"])
+        std_pred = g["pred"].std()
+        if std_pred < 1e-8:
+            print(f"[{config['model']['type'].upper()}] warning: near-constant predictions on {d.date()}, skipping IC")
+            ic = np.nan
+        else:
+            ic = rank_ic(g["pred"], g["realized_ret"])
         hit = hit_rate(g["pred"], g["realized_ret"], top_k=config["evaluation"]["top_k"])
         daily_metrics.append({"date": d, "ic": ic, "hit": hit})
     daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
