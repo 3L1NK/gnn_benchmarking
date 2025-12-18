@@ -215,14 +215,14 @@ def train_lstm(config):
             train_loader = DataLoader(train_ds, **loader_kwargs)
             val_loader = DataLoader(val_ds, **{**loader_kwargs, "shuffle": False})
 
-            scaler = GradScaler(device_type="cuda", enabled=use_cuda)
+            scaler = GradScaler(enabled=use_cuda)
             for epoch in range(max_epochs_tune):
                 model.train()
                 for xb, yb in train_loader:
                     xb = xb.to(device, non_blocking=True)
                     yb = yb.to(device, non_blocking=True)
                     optimizer.zero_grad()
-                    with autocast(device_type="cuda", enabled=use_cuda):
+                    with autocast(enabled=use_cuda):
                         pred = model(xb)
                         loss = loss_fn(pred, yb)
                     scaler.scale(loss).backward()
@@ -233,7 +233,7 @@ def train_lstm(config):
 
                 model.eval()
                 val_losses = []
-                with torch.no_grad(), autocast(device_type="cuda", enabled=use_cuda):
+                with torch.no_grad(), autocast(enabled=use_cuda):
                     for xb, yb in val_loader:
                         xb = xb.to(device, non_blocking=True)
                         yb = yb.to(device, non_blocking=True)
@@ -291,7 +291,7 @@ def train_lstm(config):
     best_val = float("inf")
     bad_epochs = 0
     patience = config["training"]["patience"]
-    scaler = GradScaler(device_type="cuda", enabled=use_cuda)
+    scaler = GradScaler(enabled=use_cuda)
 
     out_dir = Path(config["evaluation"]["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -309,7 +309,7 @@ def train_lstm(config):
             yb = yb.to(device, non_blocking=True)
 
             optimizer.zero_grad()
-            with autocast(device_type="cuda", enabled=use_cuda):
+            with autocast(enabled=use_cuda):
                 pred = model(xb)
                 loss = loss_fn(pred, yb)
             scaler.scale(loss).backward()
@@ -324,7 +324,7 @@ def train_lstm(config):
 
         model.eval()
         val_losses = []
-        with torch.no_grad(), autocast(device_type="cuda", enabled=use_cuda):
+        with torch.no_grad(), autocast(enabled=use_cuda):
             for xb, yb in val_loader:
                 xb = xb.to(device, non_blocking=True)
                 yb = yb.to(device, non_blocking=True)
