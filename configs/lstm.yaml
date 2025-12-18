@@ -14,11 +14,11 @@ model:
   input_dim: 16           # per asset feature dim
   hidden_dim: 64
   num_layers: 2
-  dropout: 0.1
+  dropout: 0.2
 
 training:
   device: "cuda"
-  batch_size: 128
+  batch_size: 512
   lr: 0.0005
   max_epochs: 40
   patience: 6
@@ -33,3 +33,12 @@ evaluation:
   transaction_cost_bps: 5
   risk_free_rate: 0.0
   out_dir: "experiments/lstm_baseline"
+
+tuning:
+  enabled: false
+  hidden_dim: [32, 64]
+  num_layers: [1, 2]
+  dropout: [0.0, 0.1]
+  lr: [0.0005, 0.001]
+  max_epochs: 10
+  patience: 3

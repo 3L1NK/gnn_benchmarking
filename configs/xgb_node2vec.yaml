@@ -5,15 +5,16 @@ data:
   universe_file: "data/processed/universe.csv"
   start_date: "2000-01-01"
   end_date: "2024-12-31"
-  target_horizon: 1
+  target_horizon: 5   # weekly horizon for consistency across models
   lookback_window: 60
   corr_window: 60
   corr_threshold: 0.4
 
 model:
-  family: baseline
+  family: xgboost
   type: xgb_node2vec
-  embedding_dim: 16
+  embedding_dim: 8  # keep embeddings small, treated as weak priors
+  graph_mode: correlation  # use correlation-only by default; set to 'combined' to include sector+industry
 
 training:
   test_start: "2020-01-01"

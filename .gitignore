@@ -12,3 +12,6 @@ venv/
 outputs/
 logs/
 .DS_Store
+
+#cache
+cache/

@@ -36,6 +36,11 @@ class StaticGNN(nn.Module):
         convs = []
         in_dim = input_dim
 
+        # GAT is forced to 1 layer and limited heads to reduce over-smoothing
+        if self.gnn_type == "gat":
+            num_layers = 1
+            heads = max(1, min(heads, 2))
+
         for layer in range(num_layers):
             if self.gnn_type == "gcn":
                 conv = GCNConv(in_dim, hidden_dim)

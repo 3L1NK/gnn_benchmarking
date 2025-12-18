@@ -4,12 +4,31 @@ data:
   price_file: "data/processed/prices.parquet"
   start_date: "2000-01-01"
   end_date: "2024-12-31"
-  target_horizon: 1
+  target_horizon: 5   # weekly horizon for consistency across models
   lookback_window: 60
 
+tuning:
+  enabled: false        # set to true to run grid search
+  # Hyperparameter grid used when tuning.enabled is true. Each value should be a list.
+  param_grid:
+    max_depth: [3, 5, 8, 10, 12, 15]
+    learning_rate: [0.001, 0.005, 0.01, 0.03]
+    n_estimators: [100, 300, 400, 500]
+    subsample: [0.7, 0.9]
+    colsample_bytree: [0.7, 0.9]
+    reg_lambda: [0.0, 1.0]
+
 model:
-  family: baseline
+  family: xgboost
   type: xgb_raw
+
+  params:
+    max_depth: 15 #15
+    learning_rate: 0.01
+    n_estimators: 300 #100
+    subsample: 0.9 #0.7
+    colsample_bytree:  0.9 #0.7
+    reg_lambda: 0.0 #1.0
 
 training:
   val_start: "2016-01-01"
