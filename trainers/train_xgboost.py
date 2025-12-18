@@ -16,6 +16,7 @@ from utils.plot import (
     plot_equity_comparison,
 )
 from utils.seeds import set_seed
+from utils.cache import cache_load, cache_save, cache_key, cache_path
 from xgboost import XGBRegressor
 from itertools import product
 from sklearn.metrics import root_mean_squared_error
@@ -136,6 +137,7 @@ class XGBoostTrainer:
 
         self.out_dir = Path(config["evaluation"]["out_dir"])
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.rebuild_cache = config.get("cache", {}).get("rebuild", False)
 
         self._registry = {
             "xgb_raw": self.train_xgb_raw,
@@ -253,9 +255,33 @@ class XGBoostTrainer:
         X = self.df[self.feat_cols].values.astype(float)
         y = self.df["target"].values.astype(float)
 
-        X_train, y_train = X[train_mask], y[train_mask]
-        X_val,   y_val   = X[val_mask],   y[val_mask]
-        X_test,  y_test  = X[test_mask],  y[test_mask]
+        cache_id = cache_key(
+            {
+                "model": "xgb_raw",
+                "params": self.config["model"],
+                "data": self.config["data"],
+                "training": self.config["training"],
+            },
+            dataset_version="xgb_raw",
+            extra_files=[self.config["data"]["price_file"]],
+        )
+        cache_file = cache_path("xgb_raw", cache_id)
+        cached = None if self.rebuild_cache else cache_load(cache_file)
+        if cached is not None:
+            X_train, y_train = cached["X_train"], cached["y_train"]
+            X_val, y_val = cached["X_val"], cached["y_val"]
+            X_test, y_test = cached["X_test"], cached["y_test"]
+            print(f"[xgb_raw] loaded splits from cache {cache_file}")
+        else:
+            X_train, y_train = X[train_mask], y[train_mask]
+            X_val,   y_val   = X[val_mask],   y[val_mask]
+            X_test,  y_test  = X[test_mask],  y[test_mask]
+            cache_save(cache_file, {
+                "X_train": X_train, "y_train": y_train,
+                "X_val": X_val, "y_val": y_val,
+                "X_test": X_test, "y_test": y_test,
+            })
+            print(f"[xgb_raw] saved splits to cache {cache_file}")
 
         # -----------------------
         # 2. Read config
@@ -459,30 +485,51 @@ class XGBoostTrainer:
             dtype=torch.long,
         )
 
+        cache_id = cache_key(
+            {
+                "model": "xgb_node2vec",
+                "graph_mode": graph_mode,
+                "emb_dim": self.config["model"].get("embedding_dim", 8),
+                "data": self.config["data"],
+                "training": self.config["training"],
+            },
+            dataset_version="xgb_node2vec",
+            extra_files=[self.config["data"]["price_file"], universe_path],
+        )
+        emb_cache = cache_path("xgb_node2vec_emb", cache_id)
+
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        emb_dim = self.config["model"].get("embedding_dim", 8)  # smaller to keep embeddings as weak priors
-        n2v = Node2Vec(
-            edge_index=edge_index,
-            embedding_dim=emb_dim,
-            walk_length=40,
-            context_size=20,
-            walks_per_node=10,
-            num_negative_samples=1,
-            sparse=True,
-        ).to(device)
+        cached_emb = None if self.rebuild_cache else cache_load(emb_cache)
+        if cached_emb is not None:
+            emb_matrix = cached_emb["emb_matrix"]
+            ticker_to_idx = cached_emb["ticker_to_idx"]
+            print(f"[xgb_node2vec] loaded embeddings from cache {emb_cache}")
+        else:
+            emb_dim = self.config["model"].get("embedding_dim", 8)  # smaller to keep embeddings as weak priors
+            n2v = Node2Vec(
+                edge_index=edge_index,
+                embedding_dim=emb_dim,
+                walk_length=40,
+                context_size=20,
+                walks_per_node=10,
+                num_negative_samples=1,
+                sparse=True,
+            ).to(device)
 
-        loader = n2v.loader(batch_size=128, shuffle=True)
-        optimizer = torch.optim.SparseAdam(n2v.parameters(), lr=0.01)
+            loader = n2v.loader(batch_size=128, shuffle=True)
+            optimizer = torch.optim.SparseAdam(n2v.parameters(), lr=0.01)
 
-        for _ in range(30):
-            for pos_rw, neg_rw in loader:
-                optimizer.zero_grad()
-                loss = n2v.loss(pos_rw.to(device), neg_rw.to(device))
-                loss.backward()
-                optimizer.step()
+            for _ in range(30):
+                for pos_rw, neg_rw in loader:
+                    optimizer.zero_grad()
+                    loss = n2v.loss(pos_rw.to(device), neg_rw.to(device))
+                    loss.backward()
+                    optimizer.step()
 
-        emb_matrix = n2v().detach().cpu().numpy()
+            emb_matrix = n2v().detach().cpu().numpy()
+            cache_save(emb_cache, {"emb_matrix": emb_matrix, "ticker_to_idx": ticker_to_idx})
+            print(f"[xgb_node2vec] saved embeddings to cache {emb_cache}")
 
         # Standardize embeddings separately and scale down so they act as weak structural priors.
         emb_mean = emb_matrix.mean(axis=0, keepdims=True)
@@ -511,15 +558,42 @@ class XGBoostTrainer:
         X = np.stack(tab["features"].values)
         y = tab["target"].values.astype(float)
 
-        train_mask, val_mask, test_mask = _time_masks(
-            tab["date"],
-            self.config["training"]["val_start"],
-            self.config["training"]["test_start"],
+        cache_id_feats = cache_key(
+            {
+                "model": "xgb_node2vec_features",
+                "graph_mode": graph_mode,
+                "data": self.config["data"],
+                "training": self.config["training"],
+                "emb_dim": self.config["model"].get("embedding_dim", 8),
+            },
+            dataset_version="xgb_node2vec_features",
+            extra_files=[self.config["data"]["price_file"], universe_path],
         )
+        feat_cache = cache_path("xgb_node2vec_feats", cache_id_feats)
+        cached_feats = None if self.rebuild_cache else cache_load(feat_cache)
 
-        X_train, y_train = X[train_mask], y[train_mask]
-        X_val, y_val = X[val_mask], y[val_mask]
-        X_test, y_test = X[test_mask], y[test_mask]
+        if cached_feats is not None:
+            X_train, y_train = cached_feats["X_train"], cached_feats["y_train"]
+            X_val, y_val = cached_feats["X_val"], cached_feats["y_val"]
+            X_test, y_test = cached_feats["X_test"], cached_feats["y_test"]
+            print(f"[xgb_node2vec] loaded feature splits from cache {feat_cache}")
+        else:
+            train_mask, val_mask, test_mask = _time_masks(
+                tab["date"],
+                self.config["training"]["val_start"],
+                self.config["training"]["test_start"],
+            )
+
+            X_train, y_train = X[train_mask], y[train_mask]
+            X_val, y_val = X[val_mask], y[val_mask]
+            X_test, y_test = X[test_mask], y[test_mask]
+
+            cache_save(feat_cache, {
+                "X_train": X_train, "y_train": y_train,
+                "X_val": X_val, "y_val": y_val,
+                "X_test": X_test, "y_test": y_test,
+            })
+            print(f"[xgb_node2vec] saved feature splits to cache {feat_cache}")
 
         model = XGBRegressor(
             n_estimators=600,

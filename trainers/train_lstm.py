@@ -1,5 +1,6 @@
 # trainers/train_lstm.py
 
+import time
 from pathlib import Path
 from itertools import product
 import json
@@ -8,6 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torch.cuda.amp import autocast, GradScaler
 
 from models.lstm_model import LSTMModel
 from utils.seeds import set_seed
@@ -21,77 +23,87 @@ from utils.plot import (
     plot_daily_ic,
     plot_ic_hist,
 )
+from utils.cache import cache_load, cache_save, cache_key, cache_path
+from utils.device import get_device, default_num_workers
+from utils.sanity import check_tensor
 
 
-# -------------------------------------------------
-# DATASET
-# -------------------------------------------------
-
-class LSTMDataset(Dataset):
-    def __init__(self, df, feat_cols, lookback, horizon):
-        self.lookback = lookback
-        self.horizon = horizon
-        self.feat_cols = feat_cols
-
-        # sort and clean
-        df = df.sort_values(["ticker", "date"]).reset_index(drop=True)
-        df = df.dropna(subset=feat_cols + ["log_ret_1d"]).reset_index(drop=True)
-
-        # shift target horizon days ahead
-        df["target"] = df.groupby("ticker")["log_ret_1d"].shift(-horizon)
-        df = df.dropna(subset=["target"]).reset_index(drop=True)
-
-        # group once
-        self.group_arrays = {}
-        self.targets = {}
-        self.index_list = []
-        self.meta_dates = []
-        self.meta_tickers = []
-
-        for t, g in df.groupby("ticker"):
-            g = g.reset_index(drop=True)
-            if len(g) <= lookback:
-                continue
-
-            x = g[feat_cols].values.astype("float32")  # fast, no pandas
-            y = g["target"].values.astype("float32")
-
-            self.group_arrays[t] = x
-            self.targets[t] = y
-
-            for pos in range(lookback, len(g)):
-                self.index_list.append((t, pos))
-                self.meta_dates.append(g.loc[pos, "date"])
-                self.meta_tickers.append(t)
+class TensorLSTMDataset(Dataset):
+    def __init__(self, X, y, dates, tickers):
+        self.X = X
+        self.y = y
+        self.dates = dates
+        self.tickers = tickers
 
     def __len__(self):
-        return len(self.index_list)
+        return self.X.shape[0]
 
     def __getitem__(self, idx):
-        t, pos = self.index_list[idx]
-        start = pos - self.lookback
-        end = pos
-
-        x = self.group_arrays[t][start:end]
-        y = self.targets[t][end]
-
-        return (
-            torch.from_numpy(x),
-            torch.tensor(y),
-        )
+        return self.X[idx], self.y[idx]
 
 
+def _build_sequences(df, feat_cols, lookback, horizon):
+    X_list, y_list, dates, tickers = [], [], [], []
+    for t, g in df.groupby("ticker"):
+        g = g.sort_values("date").reset_index(drop=True)
+        if len(g) <= lookback:
+            continue
+        x_arr = g[feat_cols].values.astype("float32")
+        y_arr = g["log_ret_1d"].shift(-horizon).values.astype("float32")
+        for pos in range(lookback, len(g) - horizon):
+            X_list.append(x_arr[pos - lookback:pos])
+            y_list.append(y_arr[pos])
+            dates.append(pd.to_datetime(g.loc[pos, "date"]))
+            tickers.append(t)
+    if not X_list:
+        raise ValueError("No sequences built; check data coverage and lookback/horizon.")
+    X = torch.tensor(np.stack(X_list), dtype=torch.float32)
+    y = torch.tensor(np.array(y_list), dtype=torch.float32)
+    return X, y, dates, tickers
 
-# -------------------------------------------------
-# MAIN TRAINING FUNCTION
-# -------------------------------------------------
+
+def _prepare_cached_sequences(config, df, feat_cols, split_masks):
+    cache_id = cache_key(
+        {
+            "model": "lstm",
+            "data": config["data"],
+            "training": config["training"],
+            "lookback": config["data"]["lookback_window"],
+        },
+        dataset_version="lstm_sequences",
+        extra_files=[config["data"]["price_file"]],
+    )
+    cache_file = cache_path("lstm_sequences", cache_id)
+    rebuild = config.get("cache", {}).get("rebuild", False)
+    if not rebuild:
+        cached = cache_load(cache_file)
+        if cached is not None:
+            print(f"[lstm] loaded sequences from cache {cache_file}")
+            return cached
+
+    lookback = config["data"]["lookback_window"]
+    horizon = config["data"]["target_horizon"]
+
+    train_mask, val_mask, test_mask = split_masks
+    splits = {}
+    for name, mask in [("train", train_mask), ("val", val_mask), ("test", test_mask)]:
+        split_df = df[mask].copy()
+        X, y, dates, tickers = _build_sequences(split_df, feat_cols, lookback, horizon)
+        splits[name] = {"X": X, "y": y, "dates": dates, "tickers": tickers}
+        issues = check_tensor(f"{name}_X", X) + check_tensor(f"{name}_y", y)
+        if issues:
+            raise ValueError(f"[lstm] Sanity failed for {name}: {'; '.join(issues)}")
+
+    cache_save(cache_file, splits)
+    print(f"[lstm] saved sequences to cache {cache_file}")
+    return splits
+
 
 def train_lstm(config):
     set_seed(42)
 
-    device_str = config["training"]["device"]
-    use_cuda = torch.cuda.is_available() and device_str.startswith("cuda")
-    device = torch.device(device_str if use_cuda else "cpu")
+    device = get_device(config["training"]["device"])
+    use_cuda = device.type == "cuda"
     torch.backends.cudnn.benchmark = True
     print(f"[lstm] device={device}, cuda_available={torch.cuda.is_available()}")
     if use_cuda:
@@ -100,21 +112,20 @@ def train_lstm(config):
         except Exception:
             pass
 
-    # -----------------------
-    # 1. Load and prepare data (prefer cached features)
-    # -----------------------
-    cache_path = Path("data/processed/feature_cache.parquet")
-    cache_cols = cache_path.with_suffix(".cols.json")
+    rebuild = config.get("cache", {}).get("rebuild", False)
 
-    if cache_path.exists():
-        df = pd.read_parquet(cache_path)
+    cache_path_feat = Path("data/processed/feature_cache.parquet")
+    cache_cols = cache_path_feat.with_suffix(".cols.json")
+
+    if cache_path_feat.exists() and not rebuild:
+        df = pd.read_parquet(cache_path_feat)
         if cache_cols.exists():
             with cache_cols.open("r") as f:
                 feat_cols = json.load(f)
         else:
             base_cols = {"ticker", "date", "close", "volume", "target"}
             feat_cols = [c for c in df.columns if c not in base_cols]
-        print(f"[lstm] loaded cached features from {cache_path}")
+        print(f"[lstm] loaded cached features from {cache_path_feat}")
     else:
         df = load_price_panel(
             config["data"]["price_file"],
@@ -122,11 +133,11 @@ def train_lstm(config):
             config["data"]["end_date"],
         )
         df, feat_cols = add_technical_features(df)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(cache_path)
+        cache_path_feat.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(cache_path_feat)
         with cache_cols.open("w") as f:
             json.dump(feat_cols, f)
-        print(f"[lstm] computed features and cached to {cache_path}")
+        print(f"[lstm] computed features and cached to {cache_path_feat}")
 
     df = df.dropna(subset=list(feat_cols) + ["log_ret_1d"]).reset_index(drop=True)
     df["date"] = pd.to_datetime(df["date"])
@@ -134,80 +145,18 @@ def train_lstm(config):
     val_start = pd.to_datetime(config["training"]["val_start"])
     test_start = pd.to_datetime(config["training"]["test_start"])
 
-    train_df = df[df["date"] < val_start]
-    val_df   = df[(df["date"] >= val_start) & (df["date"] < test_start)]
-    test_df  = df[df["date"] >= test_start]
+    train_mask = df["date"] < val_start
+    val_mask = (df["date"] >= val_start) & (df["date"] < test_start)
+    test_mask = df["date"] >= test_start
 
-    lookback = config["data"]["lookback_window"]
-    horizon  = config["data"]["target_horizon"]
+    splits = _prepare_cached_sequences(config, df, feat_cols, (train_mask, val_mask, test_mask))
 
-    cache_dir = Path("cache")
-    cache_dir.mkdir(exist_ok=True)
-
-    train_ds = LSTMDataset(train_df, feat_cols, lookback, horizon)
-    val_ds   = LSTMDataset(val_df, feat_cols, lookback, horizon)
-    test_ds  = LSTMDataset(test_df, feat_cols, lookback, horizon)
-
-    # Cache index lists to avoid recomputing between grid runs
-    index_cache = {
-        "train": (train_ds, cache_dir / "train_index.pt"),
-        "val": (val_ds, cache_dir / "val_index.pt"),
-        "test": (test_ds, cache_dir / "test_index.pt"),
-    }
-    for name, (ds, path) in index_cache.items():
-        if path.exists():
-            try:
-                ds.index_list = torch.load(path)
-                print(f"[lstm] loaded cached {name} indices from {path}")
-            except Exception:
-                pass
-        else:
-            try:
-                torch.save(ds.index_list, path)
-                print(f"[lstm] cached {name} indices to {path}")
-            except Exception:
-                pass
-
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=config["training"]["batch_size"],
-        shuffle=True,
-        num_workers=16,
-        pin_memory=True,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=config["training"]["batch_size"],
-        shuffle=False,
-        num_workers=16,
-        pin_memory=True,
-    )
-    test_loader = DataLoader(
-        test_ds,
-        batch_size=config["training"]["batch_size"],
-        shuffle=False,
-        num_workers=16,
-        pin_memory=True,
-    )
-
-    print("Train samples:", len(train_ds))
-    print("Val samples:", len(val_ds))
-    print("Test samples:", len(test_ds))
-
-    out_dir = Path(config["evaluation"]["out_dir"])
-    out_dir.mkdir(parents=True, exist_ok=True)
-    model_path = out_dir / "best_lstm.pt"
-
-    # -----------------------
-    # 2. Hyperparameter choice
-    #    either from YAML or simple grid search
-    # -----------------------
+    # 2. Hyperparameter choice (unchanged)
     tune_cfg = config.get("tuning", {"enabled": False})
     use_tuning = tune_cfg.get("enabled", False)
     print("LSTM tuning enabled:", use_tuning)
 
     if not use_tuning:
-        # use fixed values from YAML
         hidden_dim = config["model"]["hidden_dim"]
         num_layers = config["model"]["num_layers"]
         dropout    = config["model"]["dropout"]
@@ -222,7 +171,6 @@ def train_lstm(config):
         print("Using fixed LSTM parameters:", best_params)
 
     else:
-        # small grid defined in code, like xgb_raw
         param_grid = {
             "hidden_dim": [32, 64],
             "num_layers": [1, 2],
@@ -250,41 +198,56 @@ def train_lstm(config):
             optimizer = torch.optim.Adam(model.parameters(), lr=params["lr"])
             loss_fn = torch.nn.MSELoss()
 
-            # short training for tuning
+            X_train, y_train = splits["train"]["X"], splits["train"]["y"]
+            X_val, y_val = splits["val"]["X"], splits["val"]["y"]
+
+            train_ds = TensorLSTMDataset(X_train, y_train, [], [])
+            val_ds   = TensorLSTMDataset(X_val, y_val, [], [])
+            bs = max(2, config["training"]["batch_size"])
+            num_workers = default_num_workers()
+            loader_kwargs = {
+                "batch_size": bs,
+                "shuffle": True,
+                "num_workers": num_workers,
+                "pin_memory": use_cuda,
+                "persistent_workers": num_workers > 0,
+            }
+            train_loader = DataLoader(train_ds, **loader_kwargs)
+            val_loader = DataLoader(val_ds, **{**loader_kwargs, "shuffle": False})
+
+            scaler = GradScaler(enabled=use_cuda)
             for epoch in range(max_epochs_tune):
                 model.train()
-                for x, y in train_loader:
-                    x = x.to(device)
-                    y = y.to(device)
-
+                for xb, yb in train_loader:
+                    xb = xb.to(device, non_blocking=True)
+                    yb = yb.to(device, non_blocking=True)
                     optimizer.zero_grad()
-                    pred = model(x)
-                    loss = loss_fn(pred, y)
-                    loss.backward()
-                    optimizer.step()
+                    with autocast(enabled=use_cuda):
+                        pred = model(xb)
+                        loss = loss_fn(pred, yb)
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
 
-            # one validation pass
-            model.eval()
-            val_losses = []
-            with torch.no_grad():
-                for x, y in val_loader:
-                    x = x.to(device)
-                    y = y.to(device)
-                    pred = model(x)
-                    val_losses.append(loss_fn(pred, y).detach())
+                model.eval()
+                val_losses = []
+                with torch.no_grad(), autocast(enabled=use_cuda):
+                    for xb, yb in val_loader:
+                        xb = xb.to(device, non_blocking=True)
+                        yb = yb.to(device, non_blocking=True)
+                        pred = model(xb)
+                        val_losses.append(loss_fn(pred, yb).detach())
 
-            mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("inf")
-            print("Params", params, "val_loss", mean_val)
+                mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("inf")
+                print("Params", params, "val_loss", mean_val)
 
-            if mean_val < best_val:
-                best_val = mean_val
-                best_params = params
+                if mean_val < best_val:
+                    best_val = mean_val
+                    best_params = params
 
         print("Best LSTM parameters:", best_params, "with val_loss", best_val)
 
-    # -----------------------
-    # 3. Final training with early stopping
-    # -----------------------
+    # 3. Final training
     hidden_dim = best_params["hidden_dim"]
     num_layers = best_params["num_layers"]
     dropout    = best_params["dropout"]
@@ -300,41 +263,74 @@ def train_lstm(config):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = torch.nn.MSELoss()
 
+    bs = max(2, config["training"]["batch_size"])
+    num_workers = default_num_workers()
+    loader_kwargs = {
+        "batch_size": bs,
+        "shuffle": True,
+        "num_workers": num_workers,
+        "pin_memory": use_cuda,
+        "persistent_workers": num_workers > 0,
+    }
+
+    train_loader = DataLoader(
+        TensorLSTMDataset(splits["train"]["X"], splits["train"]["y"], [], []),
+        **loader_kwargs,
+    )
+    val_loader = DataLoader(
+        TensorLSTMDataset(splits["val"]["X"], splits["val"]["y"], [], []),
+        **{**loader_kwargs, "shuffle": False},
+    )
+    test_loader = DataLoader(
+        TensorLSTMDataset(splits["test"]["X"], splits["test"]["y"], [], []),
+        **{**loader_kwargs, "shuffle": False},
+    )
+
     best_val = float("inf")
-    patience = config["training"]["patience"]
     bad_epochs = 0
+    patience = config["training"]["patience"]
+    scaler = GradScaler(enabled=use_cuda)
+
+    out_dir = Path(config["evaluation"]["out_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    model_path = out_dir / "best_lstm.pt"
 
     max_epochs = config["training"]["max_epochs"]
 
     for epoch in range(max_epochs):
+        t0 = time.time()
         model.train()
         train_losses = []
 
-        for x, y in train_loader:
-            x = x.to(device)
-            y = y.to(device)
+        for xb, yb in train_loader:
+            xb = xb.to(device, non_blocking=True)
+            yb = yb.to(device, non_blocking=True)
 
             optimizer.zero_grad()
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            loss.backward()
-            optimizer.step()
+            with autocast(enabled=use_cuda):
+                pred = model(xb)
+                loss = loss_fn(pred, yb)
+            scaler.scale(loss).backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config["training"]["gradient_clip"])
+            scaler.step(optimizer)
+            scaler.update()
 
             train_losses.append(loss.detach())
+        data_time = 0.0
+        compute_time = time.time() - t0
 
-        # validation
         model.eval()
         val_losses = []
-        with torch.no_grad():
-            for x, y in val_loader:
-                x = x.to(device)
-                y = y.to(device)
-                pred = model(x)
-                val_losses.append(loss_fn(pred, y).detach())
+        with torch.no_grad(), autocast(enabled=use_cuda):
+            for xb, yb in val_loader:
+                xb = xb.to(device, non_blocking=True)
+                yb = yb.to(device, non_blocking=True)
+                pred = model(xb)
+                val_losses.append(loss_fn(pred, yb).detach())
 
         mean_train = float(torch.stack(train_losses).mean().item()) if train_losses else float("nan")
         mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("inf")
-        print(f"[LSTM] Epoch {epoch} train {mean_train:.5f} val {mean_val:.5f}")
+        print(f"[LSTM] Epoch {epoch} train {mean_train:.5f} val {mean_val:.5f} (compute {compute_time:.2f}s)")
 
         if mean_val < best_val:
             best_val = mean_val
@@ -346,27 +342,27 @@ def train_lstm(config):
                 print("Early stopping")
                 break
 
-    # -----------------------
     # 4. Test predictions
-    # -----------------------
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
     rows = []
     all_preds = []
     all_real = []
-    with torch.no_grad():
-        for x, y in test_loader:
-            x = x.to(device)
-            preds = model(x).cpu().numpy()
-            y_np = y.numpy()
+    with torch.no_grad(), autocast(enabled=use_cuda):
+        for xb, yb in test_loader:
+            xb = xb.to(device, non_blocking=True)
+            preds = model(xb).cpu().numpy()
+            y_np = yb.numpy()
             all_preds.extend(preds)
             all_real.extend(y_np)
 
+    dates = splits["test"]["dates"]
+    tickers = splits["test"]["tickers"]
     for i, (p, r) in enumerate(zip(all_preds, all_real)):
         rows.append({
-            "date": pd.to_datetime(test_ds.meta_dates[i]),
-            "ticker": test_ds.meta_tickers[i],
+            "date": pd.to_datetime(dates[i]),
+            "ticker": tickers[i],
             "pred": float(p),
             "realized_ret": float(r),
         })
@@ -374,9 +370,7 @@ def train_lstm(config):
     pred_df = pd.DataFrame(rows).sort_values("date")
     pred_df.to_csv(out_dir / "lstm_predictions.csv", index=False)
 
-    # -----------------------
     # 5. IC / hit metrics
-    # -----------------------
     daily_metrics = []
     for d, g in pred_df.groupby("date"):
         ic = rank_ic(g["pred"], g["realized_ret"])
@@ -402,14 +396,13 @@ def train_lstm(config):
         out_dir / "lstm_ic_histogram.png",
     )
 
-    # -----------------------
     # 6. Long only backtest, daily rebalancing + buy-and-hold comparison
-    # -----------------------
     curve, daily_ret, stats = backtest_long_only(
         pred_df,
         top_k=config["evaluation"]["top_k"],
         transaction_cost_bps=config["evaluation"]["transaction_cost_bps"],
         risk_free_rate=config["evaluation"]["risk_free_rate"],
+        rebalance_freq=5,
     )
 
     curve.to_csv(out_dir / "lstm_equity_curve.csv", header=["value"])

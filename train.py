@@ -55,8 +55,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--rebuild-cache", action="store_true", help="Force recomputation of cached artifacts")
     args = parser.parse_args()
 
     config = load_config(args.config)
+    config["cache"] = {"rebuild": args.rebuild_cache}
 
     main(config)
