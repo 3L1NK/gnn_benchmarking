@@ -18,7 +18,7 @@ import pandas as pd
 import torch
 from torch import amp
 from torch.utils.data import Dataset, DataLoader
-from torch.amp import GradScaler
+from torch.cuda.amp import GradScaler
 
 from models.lstm_model import LSTMModel
 from utils.seeds import set_seed
@@ -263,7 +263,7 @@ def train_lstm(config):
             train_loader = DataLoader(train_ds, **loader_kwargs)
             val_loader = DataLoader(val_ds, **{**loader_kwargs, "shuffle": False})
 
-            scaler = GradScaler(device_type="cuda" if use_cuda else "cpu")
+            scaler = GradScaler(enabled=use_cuda)
             for epoch in range(max_epochs_tune):
                 model.train()
                 for xb, yb in train_loader:
@@ -339,7 +339,7 @@ def train_lstm(config):
     best_val = float("inf")
     bad_epochs = 0
     patience = config["training"]["patience"]
-    scaler = GradScaler(device_type="cuda" if use_cuda else "cpu")
+    scaler = GradScaler(enabled=use_cuda)
 
     out_dir = Path(config["evaluation"]["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)

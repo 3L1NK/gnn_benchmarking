@@ -54,6 +54,8 @@ def _build_snapshots_and_targets(config):
     w_corr = float(graph_cfg.get("w_corr", 1.0))
     w_sector = float(graph_cfg.get("w_sector", 0.2))
     w_granger = float(graph_cfg.get("w_granger", 0.2))
+    # global clamp for merged edge weights to avoid amplification
+    max_edge_weight = float(graph_cfg.get("max_edge_weight", 1.0))
 
     # sector/industry weights (only used when use_sector is True)
     sector_weight = float(graph_cfg.get("sector_weight", 0.2))
@@ -310,7 +312,12 @@ def _build_snapshots_and_targets(config):
         for (i, j), w in final_map.items():
             src.extend([i, j])
             dst.extend([j, i])
-            w_vals.extend([w, w])
+            # keep per-direction weight; clamp non-self edges to max_edge_weight
+            if i == j:
+                w_vals.extend([1.0, 1.0])
+            else:
+                w_clamped = float(min(w, max_edge_weight)) if np.isfinite(w) else 0.0
+                w_vals.extend([w_clamped, w_clamped])
 
         edge_index = torch.tensor([src, dst], dtype=torch.long)
         edge_weight = torch.tensor(w_vals, dtype=torch.float32)

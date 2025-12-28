@@ -22,6 +22,8 @@ graph_edges:
   w_corr: 1.0
   w_sector: 0.2
   w_granger: 0.2
+  # clamp for merged (final) edge weights to prevent amplification / instability
+  max_edge_weight: 1.0
   log_edge_stats: false
   use_granger: false
   use_graphical_lasso: false
