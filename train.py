@@ -78,6 +78,17 @@ if __name__ == "__main__":
                 graph["sector_weight"] = float(ge.get("sector_weight", 0.2))
             if "industry_weight" in ge:
                 graph["industry_weight"] = float(ge.get("industry_weight", 0.1))
+            # new per-edge-type weight scalars and top-k budgets
+            if "w_corr" in ge:
+                graph["w_corr"] = float(ge.get("w_corr", 1.0))
+            if "w_sector" in ge:
+                graph["w_sector"] = float(ge.get("w_sector", 0.2))
+            if "w_granger" in ge:
+                graph["w_granger"] = float(ge.get("w_granger", 0.2))
+            if "sector_top_k" in ge:
+                graph["sector_top_k"] = int(ge.get("sector_top_k", 5))
+            if "granger_top_k" in ge:
+                graph["granger_top_k"] = int(ge.get("granger_top_k", 5))
 
             cfg["graph"] = graph
 

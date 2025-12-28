@@ -15,6 +15,13 @@ graph_edges:
   use_industry: true
   sector_weight: 0.2
   industry_weight: 0.1
+  # Degree budgets per edge type (to avoid degree explosion when merging)
+  sector_top_k: 5
+  granger_top_k: 5
+  # Per-edge-type scalar weights applied after normalization
+  w_corr: 1.0
+  w_sector: 0.2
+  w_granger: 0.2
   log_edge_stats: false
   use_granger: false
   use_graphical_lasso: false

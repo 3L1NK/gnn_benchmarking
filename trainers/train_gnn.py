@@ -46,6 +46,14 @@ def _build_snapshots_and_targets(config):
     # correlation params
     corr_top_k = int(graph_cfg.get("corr_top_k", 10))
     corr_min_periods = int(graph_cfg.get("corr_min_periods", max(5, corr_window // 2)))
+    # per-edge-type degree budgets (mandatory)
+    sector_top_k = int(graph_cfg.get("sector_top_k", 5))
+    granger_top_k = int(graph_cfg.get("granger_top_k", 5))
+
+    # per-edge-type scalar weights (mandatory)
+    w_corr = float(graph_cfg.get("w_corr", 1.0))
+    w_sector = float(graph_cfg.get("w_sector", 0.2))
+    w_granger = float(graph_cfg.get("w_granger", 0.2))
 
     # sector/industry weights (only used when use_sector is True)
     sector_weight = float(graph_cfg.get("sector_weight", 0.2))
@@ -230,21 +238,67 @@ def _build_snapshots_and_targets(config):
                 key = tuple(sorted((i, j)))
                 gr_map_idx[key] = max(gr_map_idx.get(key, 0.0), float(w))
 
-        # Normalize per-type maps and sum
+        # --- Apply per-edge-type trimming and scalar weighting BEFORE merging ---
+        def trim_pair_map(pair_map, top_k, n_nodes):
+            """Trim unordered-pair map so each node has at most `top_k` neighbors.
+            Keep an edge if it is in the top_k of at least one endpoint.
+            """
+            if not pair_map or top_k <= 0:
+                return {}
+            # build adjacency lists
+            adj = {i: [] for i in range(n_nodes)}
+            for (a, b), w in pair_map.items():
+                adj[a].append(((a, b), b, w))
+                adj[b].append(((a, b), a, w))
+
+            keep_keys = set()
+            for node, nbrs in adj.items():
+                if not nbrs:
+                    continue
+                # sort by weight descending
+                nbrs_sorted = sorted(nbrs, key=lambda t: t[2], reverse=True)
+                for item in nbrs_sorted[:top_k]:
+                    keep_keys.add(item[0])
+
+            return {k: v for k, v in pair_map.items() if k in keep_keys}
+
+        # trim per-type maps
+        corr_map = trim_pair_map(corr_map, corr_top_k if corr_top_k is not None else 0, n_nodes)
+        sector_map_pairs = trim_pair_map(sector_map_pairs, sector_top_k if sector_top_k is not None else 0, n_nodes)
+        gr_map_idx = trim_pair_map(gr_map_idx, granger_top_k if granger_top_k is not None else 0, n_nodes)
+
+        # apply per-edge-type scalar weights
+        # Corr: scale normalized corr weights by w_corr
+        if corr_map:
+            vmax = max(corr_map.values())
+            if vmax > 0:
+                for k in list(corr_map.keys()):
+                    corr_map[k] = (corr_map[k] / vmax) * w_corr
+
+        # Sector: set sector edges to uniform w_sector (as requested)
+        if sector_map_pairs:
+            for k in list(sector_map_pairs.keys()):
+                sector_map_pairs[k] = float(w_sector)
+
+        # Granger: scale normalized granger weights by w_granger
+        if gr_map_idx:
+            vmax = max(gr_map_idx.values())
+            if vmax > 0:
+                for k in list(gr_map_idx.keys()):
+                    gr_map_idx[k] = (gr_map_idx[k] / vmax) * w_granger
+
+        # Merge maps (no cross-type normalization)
         final_map = {}
+        for k, v in corr_map.items():
+            final_map[k] = final_map.get(k, 0.0) + v
+        for k, v in sector_map_pairs.items():
+            final_map[k] = final_map.get(k, 0.0) + v
+        for k, v in gr_map_idx.items():
+            final_map[k] = final_map.get(k, 0.0) + v
 
-        def _add_normalized(src_map):
-            if not src_map:
-                return
-            vmax = max(src_map.values())
-            if vmax <= 0:
-                return
-            for k, v in src_map.items():
-                final_map[k] = final_map.get(k, 0.0) + (v / vmax)
-
-        _add_normalized(corr_map)
-        _add_normalized(sector_map_pairs)
-        _add_normalized(gr_map_idx)
+        # Ensure self-loops are present and strong: weight = 1.0
+        for i_node in range(n_nodes):
+            final_map[(i_node, i_node)] = 1.0
 
         if not final_map:
             continue
@@ -368,6 +422,34 @@ def train_gnn(config):
         mean_edges = float(np.mean(edge_counts)) if edge_counts else 0.0
         print(f"[gnn] edge types enabled: use_corr={use_corr} use_sector={use_sector} use_granger={use_granger}")
         print(f"[gnn] mean nodes per snapshot={mean_nodes:.1f}, mean directed edges per snapshot={mean_edges:.1f}")
+        # Compute mean degree (undirected) and max degree per node across snapshots
+        try:
+            mean_degrees = []
+            max_degrees = []
+            for g in snapshots:
+                if g.edge_index is None or g.edge_index.shape[1] == 0:
+                    mean_degrees.append(0.0)
+                    max_degrees.append(0)
+                    continue
+                ei = g.edge_index.cpu().numpy()
+                pairs = set()
+                for a, b in zip(ei[0].tolist(), ei[1].tolist()):
+                    pairs.add(tuple(sorted((int(a), int(b)))))
+                # build adjacency counts (exclude self-loops)
+                n = g.x.shape[0]
+                deg = [0] * n
+                for u, v in pairs:
+                    if u == v:
+                        continue
+                    deg[u] += 1
+                    deg[v] += 1
+                mean_degrees.append(float(np.mean(deg)))
+                max_degrees.append(int(np.max(deg) if deg else 0))
+            overall_mean_degree = float(np.mean(mean_degrees)) if mean_degrees else 0.0
+            overall_max_degree = int(np.max(max_degrees)) if max_degrees else 0
+            print(f"[gnn] mean degree per node (averaged across snapshots)={overall_mean_degree:.2f}, max degree per node (across snapshots)={overall_max_degree}")
+        except Exception:
+            pass
         if use_granger:
             try:
                 # compute granger edges count from train-only data for reporting
@@ -417,12 +499,29 @@ def train_gnn(config):
     val_loader = GeoDataLoader(val_snaps, **{**loader_kwargs, "shuffle": False})
     test_loader = GeoDataLoader(test_snaps, **{**loader_kwargs, "shuffle": False})
 
+    # Reduce GCN depth to avoid oversmoothing: default to 1 layer, allow 2 only if explicitly requested
+    requested_layers = int(config["model"].get("num_layers", 1))
+    model_type = config["model"]["type"].lower()
+    if model_type == "gcn":
+        if requested_layers == 2:
+            num_layers = 2
+        else:
+            num_layers = 1
+    else:
+        num_layers = min(requested_layers, 2)
+
+    # Ensure dropout enabled and non-zero for GCN to reduce oversmoothing
+    dropout_val = float(config["model"].get("dropout", 0.0))
+    if model_type == "gcn" and dropout_val <= 0.0:
+        print("[gnn] Warning: forcing non-zero dropout=0.2 for GCN to reduce oversmoothing")
+        dropout_val = 0.2
+
     model = StaticGNN(
         gnn_type=config["model"]["type"],
         input_dim=len(feat_cols),
         hidden_dim=config["model"]["hidden_dim"],
-        num_layers=min(config["model"]["num_layers"], 2),
-        dropout=config["model"]["dropout"],
+        num_layers=num_layers,
+        dropout=dropout_val,
         heads=config["model"].get("heads", 1),
         use_residual=True,
     ).to(device)
