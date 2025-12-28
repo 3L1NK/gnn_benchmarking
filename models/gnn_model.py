@@ -36,6 +36,8 @@ class StaticGNN(nn.Module):
         self.use_residual = use_residual
 
         convs = []
+        bns = []
+        res_projs = []
         in_dim = input_dim
 
         # keep shallow to avoid over-smoothing
@@ -53,20 +55,36 @@ class StaticGNN(nn.Module):
                 out_dim = hidden_dim
 
             convs.append(conv)
+            # batchnorm to stabilize training across days / batches
+            bns.append(nn.BatchNorm1d(out_dim))
+
+            # residual projection if dims differ
+            if use_residual and in_dim != out_dim:
+                res_projs.append(nn.Linear(in_dim, out_dim))
+            else:
+                res_projs.append(nn.Identity())
+
             in_dim = out_dim
 
         self.convs = nn.ModuleList(convs)
+        self.bns = nn.ModuleList(bns)
+        self.res_projs = nn.ModuleList(res_projs)
         self.head = nn.Linear(in_dim, 1)
 
     def forward(self, x, edge_index, edge_weight=None):
-        for conv in self.convs:
+        for i, conv in enumerate(self.convs):
             # edge_weight is only used by GCNConv, GATConv ignores it
             if self.gnn_type == "gcn" and edge_weight is not None:
                 out = conv(x, edge_index, edge_weight)
             else:
                 out = conv(x, edge_index)
-            if self.use_residual and out.shape == x.shape:
-                out = out + x
+
+            if self.use_residual:
+                res = self.res_projs[i](x)
+                out = out + res
+
+            # BatchNorm expects shape [N, C]
+            out = self.bns[i](out)
             x = self.activation(out)
             x = self.dropout(x)
 

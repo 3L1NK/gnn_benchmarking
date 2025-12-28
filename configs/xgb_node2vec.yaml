@@ -16,6 +16,16 @@ model:
   embedding_dim: 8  # keep embeddings small, treated as weak priors
   graph_mode: correlation  # use correlation-only by default; set to 'combined' to include sector+industry
 
+tuning:
+  enabled: true
+  param_grid:
+    max_depth: [3, 5, 7]
+    learning_rate: [0.01, 0.03]
+    n_estimators: [400, 600]
+    subsample: [0.7, 0.9]
+    colsample_bytree: [0.7, 0.9]
+    reg_lambda: [0.0, 1.0]
+
 training:
   test_start: "2020-01-01"
   val_start: "2016-01-01"
