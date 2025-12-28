@@ -61,7 +61,22 @@ def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate
         if day_df.empty:
             continue
 
-        todays_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+        # realized_ret in our pipeline is log returns (log_ret_1d). Convert to
+        # simple returns before compounding: simple = exp(log) - 1
+        raw_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+        todays_ret = {}
+        for k, v in raw_ret.items():
+            try:
+                if pd.isna(v):
+                    todays_ret[k] = 0.0
+                else:
+                    todays_ret[k] = float(np.expm1(v))
+            except Exception:
+                # fallback: if value not numeric, treat as zero
+                try:
+                    todays_ret[k] = float(v)
+                except Exception:
+                    todays_ret[k] = 0.0
         transaction_cost = 0.0
 
         # Rebalance on schedule; otherwise hold previous weights
@@ -167,7 +182,20 @@ def backtest_long_short(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rat
         transaction_cost = turnover * (transaction_cost_bps / 10000.0)
 
         # compute portfolio return
-        todays_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+        # convert log realized returns to simple returns for portfolio math
+        raw_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+        todays_ret = {}
+        for k, v in raw_ret.items():
+            try:
+                if pd.isna(v):
+                    todays_ret[k] = 0.0
+                else:
+                    todays_ret[k] = float(np.expm1(v))
+            except Exception:
+                try:
+                    todays_ret[k] = float(v)
+                except Exception:
+                    todays_ret[k] = 0.0
 
         r = 0.0
         for t, w in new_weights.items():

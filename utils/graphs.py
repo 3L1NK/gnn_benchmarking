@@ -116,9 +116,6 @@ def rolling_corr_edges(panel_df, date, window, threshold):
     if hist.empty:
         return []
 
-    if hist.empty:
-        return []
-
     pivot = hist.dropna(axis=1, how="all")
     corr = pivot.corr()
 

@@ -286,6 +286,7 @@ class XGBoostTrainer:
                 "params": self.config["model"],
                 "data": self.config["data"],
                 "training": self.config["training"],
+                "cross_sectional_zscore": cs_zscore,
             },
             dataset_version="xgb_raw",
             extra_files=[self.config["data"]["price_file"]],
@@ -721,6 +722,7 @@ class XGBoostTrainer:
                 "graph_mode": graph_mode,
                 "data": self.config["data"],
                 "training": self.config["training"],
+                "cross_sectional_zscore": cs_zscore,
                 "emb_dim": self.config["model"].get("embedding_dim", 8),
             },
             dataset_version="xgb_node2vec_features",
@@ -872,13 +874,12 @@ class XGBoostTrainer:
         set_seed(42)
 
         val_start = self.config["training"]["val_start"]
-        # subtract one day so Graphical Lasso training window does not include the
-        # first validation date (avoid inclusion leakage)
-        end_date_for_gl = pd.to_datetime(val_start) - pd.Timedelta(days=1)
+        # `graphical_lasso_precision` treats end_date as exclusive, so pass the
+        # validation start directly and let the function exclude it.
         _, _, _, adj = graphical_lasso_precision(
             self.df,
             start_date=self.config["data"]["start_date"],
-            end_date=end_date_for_gl,
+            end_date=val_start,
             alpha=self.config.get("graphlasso_alpha", 0.01),
         )
 
@@ -929,13 +930,12 @@ class XGBoostTrainer:
         returns_df = self.df[["date", "ticker", "log_ret_1d"]].copy()
 
         val_start = self.config["training"]["val_start"]
-        # subtract one day so Graphical Lasso training window does not include the
-        # first validation date (avoid inclusion leakage)
-        end_date_for_gl = pd.to_datetime(val_start) - pd.Timedelta(days=1)
+        # `graphical_lasso_precision` treats end_date as exclusive, so pass the
+        # validation start directly and let the function exclude it.
         _, _, _, adj = graphical_lasso_precision(
             returns_df,
             start_date=self.config["data"]["start_date"],
-            end_date=end_date_for_gl,
+            end_date=val_start,
             alpha=self.config.get("graphlasso_alpha", 0.01),
         )
 

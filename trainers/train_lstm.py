@@ -88,6 +88,7 @@ def _prepare_cached_sequences(config, df, feat_cols, split_masks):
             "data": config["data"],
             "training": config["training"],
             "lookback": config["data"]["lookback_window"],
+            "target_horizon": config["data"].get("target_horizon"),
         },
         dataset_version="lstm_sequences",
         extra_files=[config["data"]["price_file"]],
