@@ -1,4 +1,12 @@
-# trainers/train_lstm.py
+"""
+trainers/train_lstm.py
+
+LSTM trainer with:
+- Cached sequence construction (no runtime feature building)
+- Optional hyperparameter search
+- Mixed precision and GPU-friendly data loading
+- Rebased equity plots for fair buy-and-hold comparison
+"""
 
 import time
 from pathlib import Path
@@ -10,7 +18,7 @@ import pandas as pd
 import torch
 from torch import amp
 from torch.utils.data import Dataset, DataLoader
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 
 from models.lstm_model import LSTMModel
 from utils.seeds import set_seed
@@ -45,6 +53,11 @@ class TensorLSTMDataset(Dataset):
 
 
 def _build_sequences(df, feat_cols, lookback, horizon):
+    """
+    Convert per-ticker time series into fixed-length sequences and targets.
+    Assumes df is already cleaned and contains log_ret_1d plus features.
+    """
+    # We walk each ticker once: slice fixed lookback windows and take the horizon-ahead return as target.
     X_list, y_list, dates, tickers = [], [], [], []
     for t, g in df.groupby("ticker"):
         g = g.sort_values("date").reset_index(drop=True)
@@ -65,6 +78,10 @@ def _build_sequences(df, feat_cols, lookback, horizon):
 
 
 def _prepare_cached_sequences(config, df, feat_cols, split_masks):
+    """
+    Build or load cached train/val/test tensors for the LSTM.
+    Returns dict with {split: {X, y, dates, tickers}}.
+    """
     cache_id = cache_key(
         {
             "model": "lstm",
@@ -102,6 +119,15 @@ def _prepare_cached_sequences(config, df, feat_cols, split_masks):
 
 
 def train_lstm(config):
+    """
+    Main entrypoint for LSTM training.
+    Workflow:
+      1) Load/calc features, split by date
+      2) Build/load cached sequences (no runtime feature work)
+      3) Optional hyperparameter search
+      4) Train with AMP, GPU-friendly loaders, grad clipping
+      5) Evaluate, backtest, and plot with rebased curves
+    """
     set_seed(42)
 
     device = get_device(config["training"]["device"])
@@ -116,6 +142,7 @@ def train_lstm(config):
 
     rebuild = config.get("cache", {}).get("rebuild", False)
 
+    # 1. Load and prepare data (prefer cached features)
     cache_path_feat = Path("data/processed/feature_cache.parquet")
     cache_cols = cache_path_feat.with_suffix(".cols.json")
 
@@ -135,6 +162,7 @@ def train_lstm(config):
             config["data"]["end_date"],
         )
         df, feat_cols = add_technical_features(df)
+        print(df.head())
         cache_path_feat.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(cache_path_feat)
         with cache_cols.open("w") as f:
@@ -217,7 +245,7 @@ def train_lstm(config):
             train_loader = DataLoader(train_ds, **loader_kwargs)
             val_loader = DataLoader(val_ds, **{**loader_kwargs, "shuffle": False})
 
-            scaler = GradScaler(enabled=use_cuda)
+            scaler = GradScaler(device_type="cuda" if use_cuda else "cpu")
             for epoch in range(max_epochs_tune):
                 model.train()
                 for xb, yb in train_loader:
@@ -293,7 +321,7 @@ def train_lstm(config):
     best_val = float("inf")
     bad_epochs = 0
     patience = config["training"]["patience"]
-    scaler = GradScaler(enabled=use_cuda)
+    scaler = GradScaler(device_type="cuda" if use_cuda else "cpu")
 
     out_dir = Path(config["evaluation"]["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -311,6 +339,7 @@ def train_lstm(config):
             yb = yb.to(device, non_blocking=True)
 
             optimizer.zero_grad()
+            # AMP for faster training on GPU; GradScaler handles scaling/backward.
             with amp.autocast(device_type="cuda", enabled=use_cuda):
                 pred = model(xb)
                 loss = loss_fn(pred, yb)
@@ -354,7 +383,7 @@ def train_lstm(config):
     rows = []
     all_preds = []
     all_real = []
-    with torch.no_grad(), autocast(enabled=use_cuda):
+    with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
         for xb, yb in test_loader:
             xb = xb.to(device, non_blocking=True)
             preds = model(xb).cpu().numpy()
@@ -409,34 +438,44 @@ def train_lstm(config):
         risk_free_rate=config["evaluation"]["risk_free_rate"],
         rebalance_freq=5,
     )
-
-    curve.to_csv(out_dir / "lstm_equity_curve.csv", header=["value"])
-    plot_equity_curve(curve, "LSTM long only", out_dir / "lstm_equity_curve.png")
-
     print("LSTM backtest stats:", stats)
 
     # Global buy-and-hold baseline (precomputed, model independent)
     eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
         config,
         rebuild=config.get("cache", {}).get("rebuild", False),
+        align_start_date=config["training"]["test_start"],
     )
     print("[baseline] global buy-and-hold stats", stats_bh)
 
-    # align baseline to test window for plotting
-    start_d, end_d = pred_df["date"].min(), pred_df["date"].max()
+    # align baseline to test window and rebase both curves to start at 1.0 for plotting
+    start_d = max(curve.index.min(), pred_df["date"].min())
+    end_d = pred_df["date"].max()
     eq_bh = eq_bh_full.loc[(eq_bh_full.index >= start_d) & (eq_bh_full.index <= end_d)]
 
-    eq_bh.to_csv(out_dir / "lstm_buy_and_hold_equity_curve.csv", header=["value"])
+    def _rebase(series, start):
+        series = series.loc[series.index >= start]
+        if series.empty:
+            return series
+        return series / series.iloc[0]
+
+    curve_rebased = _rebase(curve, start_d)
+    eq_bh_rebased = _rebase(eq_bh, start_d)
+
+    curve_rebased.to_csv(out_dir / "lstm_equity_curve.csv", header=["value"])
+    plot_equity_curve(curve_rebased, "LSTM long only", out_dir / "lstm_equity_curve.png")
+
+    eq_bh_rebased.to_csv(out_dir / "lstm_buy_and_hold_equity_curve.csv", header=["value"])
     plot_equity_curve(
-        eq_bh,
+        eq_bh_rebased,
         "Buy and Hold",
         out_dir / "lstm_buy_and_hold_equity_curve.png",
     )
 
     # Combined comparison plot
     plot_equity_comparison(
-        curve,
-        eq_bh,
+        curve_rebased,
+        eq_bh_rebased,
         "LSTM vs Buy and Hold",
         out_dir / "lstm_equity_comparison.png",
     )
