@@ -1,0 +1,50 @@
+experiment_name: gat_corr_sector_granger
+
+data:
+  price_file: "data/processed/prices.parquet"
+  universe_file: "data/processed/universe.csv"
+  start_date: "2000-01-01"
+  end_date: "2024-12-31"
+  target_horizon: 1
+  lookback_window: 250
+  corr_window: 60
+  corr_threshold: 0.4
+  min_history: 250
+
+graph:
+  use_corr: true
+  use_sector: true
+  use_granger: true
+  granger_maxlag: 5
+  granger_alpha: 0.01
+  granger_topk: 50
+
+model:
+  family: gnn
+  type: gat
+  heads: 4
+  input_dim: 32
+  hidden_dim: 128
+  num_layers: 3
+  dropout: 0.1
+
+training:
+  device: "cuda"
+  batch_size: 16
+  lr: 0.0005
+  weight_decay: 1e-5
+  max_epochs: 60
+  gradient_clip: 1.0
+  patience: 8
+  val_start: "2016-01-01"
+  test_start: "2020-01-01"
+  num_workers: 4
+
+loss:
+  type: "mse"
+
+evaluation:
+  top_k: 20
+  transaction_cost_bps: 5
+  risk_free_rate: 0.0
+  out_dir: "experiments/gat_corr_sector_granger"
