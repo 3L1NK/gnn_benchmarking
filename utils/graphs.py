@@ -18,7 +18,7 @@ def granger_edges(panel_df, max_lag=2, p_threshold=0.05):
     pivot = df.pivot(index="date", columns="ticker", values="log_ret_1d").dropna()
 
     tickers = pivot.columns.tolist()
-    edges = []
+    raw = []  # collect (u, v, best_p)
 
     for i in range(len(tickers)):
         for j in range(len(tickers)):
@@ -33,14 +33,39 @@ def granger_edges(panel_df, max_lag=2, p_threshold=0.05):
 
             try:
                 result = grangercausalitytests(data, maxlag=max_lag, verbose=False)
-            except:
+            except Exception:
                 continue
 
+            # find the best (smallest) p-value across tested lags
+            best_p = 1.0
             for lag in range(1, max_lag + 1):
-                p_val = result[lag][0]["ssr_ftest"][1]
-                if p_val < p_threshold:
-                    edges.append((tickers[i], tickers[j], float(1.0)))
-                    break
+                try:
+                    p_val = result[lag][0]["ssr_ftest"][1]
+                except Exception:
+                    continue
+                if p_val < best_p:
+                    best_p = p_val
+
+            if best_p < p_threshold:
+                raw.append((tickers[i], tickers[j], float(best_p)))
+
+    # Convert p-values to weights using -log(p) then normalize to [0,1]
+    if not raw:
+        return []
+
+    eps = 1e-12
+    pvals = np.array([r[2] for r in raw], dtype=float)
+    # transform: w = -log(p); larger when p small
+    w = -np.log(np.clip(pvals, eps, 1.0))
+    if np.all(w == 0):
+        # numerical fallback
+        w = 1.0 - pvals
+    # normalize to [0,1]
+    w = w / (w.max() + 1e-12)
+
+    edges = []
+    for (u, v, _), weight in zip(raw, w.tolist()):
+        edges.append((u, v, float(weight)))
 
     return edges
 
