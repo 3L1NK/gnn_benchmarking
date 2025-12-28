@@ -51,6 +51,36 @@ if __name__ == "__main__":
                 raise FileNotFoundError(f"Included config '{include_path}' does not exist")
             base = deepcopy(load_config(include_path))
             return _deep_update(base, cfg)
+
+        # Backwards compatibility: translate old `graph_edges` section into
+        # the new `graph` section (explicit separation of model vs graph config).
+        # This allows older YAMLs to keep working while encouraging the new layout.
+        if "graph" not in cfg and "graph_edges" in cfg:
+            ge = cfg.get("graph_edges", {}) or {}
+            graph = {}
+            # booleans: prefer explicit names if present
+            graph["use_corr"] = bool(ge.get("use_correlation", ge.get("use_corr", False)))
+            graph["use_sector"] = bool(ge.get("use_sector", False))
+            # If a legacy `use_industry` or `use_sector` was used, keep sector toggle true
+            if ge.get("use_industry", False):
+                graph["use_sector"] = True
+            # If a granger config existed, map to use_granger
+            graph["use_granger"] = bool(cfg.get("granger", {}).get("enabled", False))
+
+            # correlation params mapping
+            if "corr_top_k" in ge:
+                graph["corr_top_k"] = int(ge.get("corr_top_k", 10))
+            if "corr_min_periods" in ge:
+                graph["corr_min_periods"] = int(ge.get("corr_min_periods", 0))
+
+            # sector / industry weights
+            if "sector_weight" in ge:
+                graph["sector_weight"] = float(ge.get("sector_weight", 0.2))
+            if "industry_weight" in ge:
+                graph["industry_weight"] = float(ge.get("industry_weight", 0.1))
+
+            cfg["graph"] = graph
+
         return cfg
 
     parser = argparse.ArgumentParser()

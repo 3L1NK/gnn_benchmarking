@@ -36,12 +36,18 @@ def _build_snapshots_and_targets(config):
     horizon = config["data"]["target_horizon"]
     corr_window = config["data"]["corr_window"]
     corr_thr = config["data"]["corr_threshold"]
-    graph_cfg = config.get("graph_edges", {})
-    use_corr = graph_cfg.get("use_correlation", True)
-    use_sector = graph_cfg.get("use_sector", True)
-    use_industry = graph_cfg.get("use_industry", True)
+
+    # New graph ablation flags (must fully control edge inclusion)
+    graph_cfg = config.get("graph", {})
+    use_corr = bool(graph_cfg.get("use_corr", False))
+    use_sector = bool(graph_cfg.get("use_sector", False))
+    use_granger = bool(graph_cfg.get("use_granger", False))
+
+    # correlation params
     corr_top_k = int(graph_cfg.get("corr_top_k", 10))
     corr_min_periods = int(graph_cfg.get("corr_min_periods", max(5, corr_window // 2)))
+
+    # sector/industry weights (only used when use_sector is True)
     sector_weight = float(graph_cfg.get("sector_weight", 0.2))
     industry_weight = float(graph_cfg.get("industry_weight", 0.1))
 
@@ -73,6 +79,28 @@ def _build_snapshots_and_targets(config):
 
     df["date"] = pd.to_datetime(df["date"])
     dates = sorted(df["date"].unique())
+
+    # Precompute Granger edges from train-only data when requested.
+    granger_map = {}
+    granger_edges_list = []
+    if use_granger:
+        from utils.graphs import granger_edges
+        val_start = pd.to_datetime(config["training"]["val_start"]) if "training" in config else None
+        if val_start is None:
+            raise ValueError("training.val_start must be set to compute granger edges from train-only data")
+        train_mask = df["date"] < val_start
+        try:
+            gr_edges = granger_edges(df.loc[train_mask], max_lag=int(config.get("granger", {}).get("max_lag", 2)), p_threshold=float(config.get("granger", {}).get("p_threshold", 0.05)))
+            # symmetrize and store as unordered pair -> weight
+            for u, v, w in gr_edges:
+                if u == v:
+                    continue
+                key = tuple(sorted((u, v)))
+                granger_map[key] = max(granger_map.get(key, 0.0), float(abs(w)))
+            granger_edges_list = list(granger_map.items())
+        except Exception:
+            granger_map = {}
+            granger_edges_list = []
     snapshots = []
     meta_dates = []
 
@@ -134,8 +162,11 @@ def _build_snapshots_and_targets(config):
         if not np.any(np.abs(x[valid_mask_np]) > 1e-8):
             continue
 
-        edge_dict = {}
+        # Build per-type edge weight maps (unordered pairs) and normalize separately
+        corr_map = {}
+        sector_map_pairs = {}
 
+        # Correlation edges (per-day)
         if use_corr:
             window_sub = window_ret[tickers_list]
             if (~valid_mask_np).any():
@@ -160,53 +191,73 @@ def _build_snapshots_and_targets(config):
                     w = row[j]
                     if not np.isfinite(w) or abs(w) < corr_thr:
                         continue
-                    w_abs = float(abs(w))
-                    edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), w_abs)
-                    edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), w_abs)
+                    key = tuple(sorted((i, j)))
+                    corr_map[key] = max(corr_map.get(key, 0.0), float(abs(w)))
 
-        if use_sector and sector_weight > 0:
+        # Sector + Industry edges (controlled by use_sector)
+        if use_sector and (sector_weight > 0 or industry_weight > 0):
             for i in range(n_nodes):
                 ti = tickers_list[i]
                 if not valid_mask_np[i]:
                     continue
                 si = sector_map.get(ti)
-                if si is None or (isinstance(si, float) and np.isnan(si)):
-                    continue
+                ii = industry_map.get(ti)
                 for j in range(i + 1, n_nodes):
                     tj = tickers_list[j]
                     if not valid_mask_np[j]:
                         continue
                     sj = sector_map.get(tj)
-                    if sj is None or (isinstance(sj, float) and np.isnan(sj)):
-                        continue
-                    if si == sj:
-                        edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), sector_weight)
-                        edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), sector_weight)
-
-        if use_industry and industry_weight > 0:
-            for i in range(n_nodes):
-                ti = tickers_list[i]
-                if not valid_mask_np[i]:
-                    continue
-                ii = industry_map.get(ti)
-                if ii is None or (isinstance(ii, float) and np.isnan(ii)):
-                    continue
-                for j in range(i + 1, n_nodes):
-                    tj = tickers_list[j]
-                    if not valid_mask_np[j]:
-                        continue
                     ij = industry_map.get(tj)
-                    if ij is None or (isinstance(ij, float) and np.isnan(ij)):
-                        continue
-                    if ii == ij:
-                        edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), industry_weight)
-                        edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), industry_weight)
+                    # sector match
+                    if sector_weight > 0 and si is not None and sj is not None and si == sj:
+                        key = tuple(sorted((i, j)))
+                        sector_map_pairs[key] = max(sector_map_pairs.get(key, 0.0), float(sector_weight))
+                    # industry match
+                    if industry_weight > 0 and ii is not None and ij is not None and ii == ij:
+                        key = tuple(sorted((i, j)))
+                        sector_map_pairs[key] = max(sector_map_pairs.get(key, 0.0), float(industry_weight))
 
-        if not edge_dict:
+        # Granger edges: use precomputed granger_map (ticker-name keys). Map to indices for today's universe
+        gr_map_idx = {}
+        if use_granger and granger_map:
+            for (u, v), w in granger_map.items():
+                if u not in tickers_list or v not in tickers_list:
+                    continue
+                i = tickers_list.index(u)
+                j = tickers_list.index(v)
+                if not (valid_mask_np[i] and valid_mask_np[j]):
+                    continue
+                key = tuple(sorted((i, j)))
+                gr_map_idx[key] = max(gr_map_idx.get(key, 0.0), float(w))
+
+        # Normalize per-type maps and sum
+        final_map = {}
+
+        def _add_normalized(src_map):
+            if not src_map:
+                return
+            vmax = max(src_map.values())
+            if vmax <= 0:
+                return
+            for k, v in src_map.items():
+                final_map[k] = final_map.get(k, 0.0) + (v / vmax)
+
+        _add_normalized(corr_map)
+        _add_normalized(sector_map_pairs)
+        _add_normalized(gr_map_idx)
+
+        if not final_map:
             continue
 
-        src, dst = zip(*edge_dict.keys())
-        w_vals = list(edge_dict.values())
+        # Expand unordered pairs into directed edges (both directions)
+        src = []
+        dst = []
+        w_vals = []
+        for (i, j), w in final_map.items():
+            src.extend([i, j])
+            dst.extend([j, i])
+            w_vals.extend([w, w])
+
         edge_index = torch.tensor([src, dst], dtype=torch.long)
         edge_weight = torch.tensor(w_vals, dtype=torch.float32)
         mask_edge = torch.isfinite(edge_weight)
@@ -267,11 +318,23 @@ def train_gnn(config):
     print(f"[gnn] device={device}, cuda_available={torch.cuda.is_available()}")
     rebuild = config.get("cache", {}).get("rebuild", False)
 
+    graph_flags = config.get("graph", {})
+    gr_cfg = config.get("granger", {})
     cache_id = cache_key(
         {
             "model": config["model"],
             "data": config["data"],
-            "graph_edges": config.get("graph_edges", {}),
+            "graph": {
+                "use_corr": bool(graph_flags.get("use_corr", False)),
+                "use_sector": bool(graph_flags.get("use_sector", False)),
+                "use_granger": bool(graph_flags.get("use_granger", False)),
+                "corr_top_k": int(graph_flags.get("corr_top_k", 10)),
+                "corr_min_periods": int(graph_flags.get("corr_min_periods", 0)),
+            },
+            "granger": {
+                "max_lag": int(gr_cfg.get("max_lag", 2)),
+                "p_threshold": float(gr_cfg.get("p_threshold", 0.05)),
+            },
         },
         dataset_version="gnn_snapshots",
         extra_files=[config["data"]["price_file"], "data/processed/universe.csv"],
@@ -291,6 +354,38 @@ def train_gnn(config):
         snapshots, feat_cols, dates = _build_snapshots_and_targets(config)
         cache_save(cache_file, {"snapshots": snapshots, "feat_cols": feat_cols, "dates": dates})
         print(f"[gnn] saved snapshots to cache {cache_file}")
+
+    # Mandatory logging for defensibility: edge types enabled and snapshot stats
+    graph_cfg_print = config.get("graph", {})
+    use_corr = bool(graph_cfg_print.get("use_corr", False))
+    use_sector = bool(graph_cfg_print.get("use_sector", False))
+    use_granger = bool(graph_cfg_print.get("use_granger", False))
+    # mean nodes/edges per snapshot
+    try:
+        node_counts = [g.x.shape[0] for g in snapshots]
+        edge_counts = [int(g.edge_index.shape[1]) for g in snapshots]
+        mean_nodes = float(np.mean(node_counts)) if node_counts else 0.0
+        mean_edges = float(np.mean(edge_counts)) if edge_counts else 0.0
+        print(f"[gnn] edge types enabled: use_corr={use_corr} use_sector={use_sector} use_granger={use_granger}")
+        print(f"[gnn] mean nodes per snapshot={mean_nodes:.1f}, mean directed edges per snapshot={mean_edges:.1f}")
+        if use_granger:
+            try:
+                # compute granger edges count from train-only data for reporting
+                from utils.data_loading import load_price_panel
+                from utils.graphs import granger_edges
+                start = config["data"]["start_date"]
+                end = config["data"]["end_date"]
+                df_full = load_price_panel(config["data"]["price_file"], start, end)
+                df_full["date"] = pd.to_datetime(df_full["date"])
+                val_start = pd.to_datetime(config["training"]["val_start"])
+                train_mask = df_full["date"] < val_start
+                gr_edges = granger_edges(df_full.loc[train_mask], max_lag=int(config.get("granger", {}).get("max_lag", 2)), p_threshold=float(config.get("granger", {}).get("p_threshold", 0.05)))
+                gr_count = len(gr_edges) if gr_edges else 0
+                print(f"[gnn] granger edges (precomputed count): {gr_count}")
+            except Exception:
+                print("[gnn] Warning: failed to compute granger edge count for logging")
+    except Exception:
+        pass
 
     # sanity checks
     for name, lst in [("snapshots", snapshots)]:
@@ -332,10 +427,21 @@ def train_gnn(config):
         use_residual=True,
     ).to(device)
 
+    # If using GAT with weighted edges enabled, warn that GATConv ignores edge_weight
+    try:
+        if config["model"]["type"].lower() == "gat" and (use_corr or use_sector or use_granger):
+            print("[gnn] Warning: model GAT ignores edge weights provided in `edge_weight`.\n" \
+                  "If you rely on weighting, consider using GCN or implementing weighted attention.")
+    except Exception:
+        pass
+
+    # Coerce hyperparams to numeric types to avoid YAML/string parsing issues
+    lr_val = float(config["training"].get("lr", 1e-3))
+    weight_decay_val = float(config["training"].get("weight_decay", 0.0))
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=config["training"]["lr"],
-        weight_decay=config["training"]["weight_decay"],
+        lr=lr_val,
+        weight_decay=weight_decay_val,
     )
     loss_fn = torch.nn.MSELoss()
     scaler = GradScaler(enabled=use_cuda)
