@@ -478,6 +478,7 @@ def train_gnn(config):
     eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
         config,
         rebuild=config.get("cache", {}).get("rebuild", False),
+        align_start_date=config["training"]["test_start"],
     )
     print("[baseline] global buy-and-hold stats", stats_bh)
     start_d, end_d = pred_df["date"].min(), pred_df["date"].max()
