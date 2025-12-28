@@ -228,6 +228,14 @@ def _build_snapshots_and_targets(config):
         g.valid_mask = valid_mask_tensor
         g.tickers = tickers_list
         g.date = d
+        # Log snapshot diagnostics: number of nodes and edges for defendability
+        try:
+            n_nodes = g.x.shape[0]
+            n_edges = int(g.edge_index.shape[1]) if g.edge_index is not None else 0
+            valid_nodes = int(valid_mask_np.sum())
+            print(f"[gnn] snapshot {d.date()} nodes={n_nodes} valid_nodes={valid_nodes} edges={n_edges}")
+        except Exception:
+            pass
 
         snapshots.append(g)
         meta_dates.append(d)

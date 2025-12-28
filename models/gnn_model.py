@@ -51,6 +51,10 @@ class StaticGNN(nn.Module):
                 out_dim = hidden_dim
             else:  # gat
                 # multi head GAT, concat=False keeps feature dim = hidden_dim
+                # Note: PyG's GATConv does not accept/use an `edge_weight` tensor;
+                # any edge weighting is therefore ignored by the attention implementation.
+                # If you need weighted attention, implement custom attention or
+                # construct edge features used by the convolution.
                 conv = GATConv(in_dim, hidden_dim, heads=heads, concat=False)
                 out_dim = hidden_dim
 

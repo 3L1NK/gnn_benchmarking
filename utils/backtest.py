@@ -12,16 +12,20 @@ def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
     df["date"] = pd.to_datetime(df["date"])
 
     # pivot returns to matrix [dates, tickers]
-    ret_mat = df.pivot(index="date", columns="ticker", values="log_ret_1d").sort_index()
-    ret_mat = ret_mat.fillna(0.0).values  # shape [T, N]
+    ret_df = df.pivot(index="date", columns="ticker", values="log_ret_1d").sort_index()
+    ret_df = ret_df.fillna(0.0)
+
+    # The input column is log returns (log_ret_1d). Convert to simple returns
+    # before compounding: simple_ret = exp(log_ret) - 1
+    ret_mat = np.expm1(ret_df.values)  # shape [T, N]
 
     n_assets = ret_mat.shape[1]
     w = np.ones(n_assets) / n_assets
 
     port_ret = ret_mat.dot(w)  # shape [T]
-    equity = (1 + port_ret).cumprod()
+    equity = (1.0 + port_ret).cumprod()
 
-    eq_series = pd.Series(equity, index=sorted(df["date"].unique()))
+    eq_series = pd.Series(equity, index=ret_df.index)
 
     stats = {
         "final_value": float(eq_series.iloc[-1]),

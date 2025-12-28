@@ -103,11 +103,28 @@ def _prepare_cached_sequences(config, df, feat_cols, split_masks):
     lookback = config["data"]["lookback_window"]
     horizon = config["data"]["target_horizon"]
 
-    train_mask, val_mask, test_mask = split_masks
+    # Build sequences once on the full dataframe, then assign sequences
+    # to train/val/test based on the sequence prediction date. This mirrors
+    # a realistic pipeline where each sequence uses full available history.
+    X_all, y_all, dates_all, tickers_all = _build_sequences(df, feat_cols, lookback, horizon)
+
+    dates_ser = pd.to_datetime(pd.Series(dates_all))
+    val_start = pd.to_datetime(config["training"]["val_start"])
+    test_start = pd.to_datetime(config["training"]["test_start"])
+
+    seq_train_mask = dates_ser < val_start
+    seq_val_mask = (dates_ser >= val_start) & (dates_ser < test_start)
+    seq_test_mask = dates_ser >= test_start
+
     splits = {}
-    for name, mask in [("train", train_mask), ("val", val_mask), ("test", test_mask)]:
-        split_df = df[mask].copy()
-        X, y, dates, tickers = _build_sequences(split_df, feat_cols, lookback, horizon)
+    for name, mask in [("train", seq_train_mask), ("val", seq_val_mask), ("test", seq_test_mask)]:
+        idxs = mask[mask].index.values
+        if len(idxs) == 0:
+            raise ValueError(f"[lstm] No sequences for split {name}; check date ranges and lookback/horizon.")
+        X = X_all[idxs]
+        y = y_all[idxs]
+        dates = [dates_all[i] for i in idxs]
+        tickers = [tickers_all[i] for i in idxs]
         splits[name] = {"X": X, "y": y, "dates": dates, "tickers": tickers}
         issues = check_tensor(f"{name}_X", X) + check_tensor(f"{name}_y", y)
         if issues:

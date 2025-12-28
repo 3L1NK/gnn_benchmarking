@@ -92,14 +92,34 @@ def sector_edges(universe_df: pd.DataFrame):
 
 def rolling_corr_edges(panel_df, date, window, threshold):
     """panel_df has columns date, ticker, log_ret_1d"""
-    end_date = date
-    start_date = end_date - pd.Timedelta(days=window * 2)
-    hist = panel_df[(panel_df["date"] > start_date) & (panel_df["date"] <= end_date)]
+    # Use the last `window` trading rows up to `date` (inclusive) instead of
+    # approximating with calendar days. This better matches trading-day windows.
+    end_date = pd.to_datetime(date)
+
+    pivot_all = (
+        panel_df.assign(date=pd.to_datetime(panel_df["date"]))
+        .pivot(index="date", columns="ticker", values="log_ret_1d")
+        .sort_index()
+    )
+
+    if end_date not in pivot_all.index:
+        # if the exact date isn't present, select the last index <= end_date
+        idxs = pivot_all.index[pivot_all.index <= end_date]
+        if len(idxs) == 0:
+            return []
+        end_pos = idxs.max()
+    else:
+        end_pos = end_date
+
+    hist = pivot_all.loc[:end_pos].tail(window)
 
     if hist.empty:
         return []
 
-    pivot = hist.pivot(index="date", columns="ticker", values="log_ret_1d").dropna(axis=1, how="all")
+    if hist.empty:
+        return []
+
+    pivot = hist.dropna(axis=1, how="all")
     corr = pivot.corr()
 
     edges = []
@@ -126,7 +146,8 @@ def graphical_lasso_precision(
     df = returns_df.copy()
     df["date"] = pd.to_datetime(df["date"])
 
-    mask = (df["date"] >= pd.to_datetime(start_date)) & (df["date"] <= pd.to_datetime(end_date))
+    # make end date exclusive to avoid leaking the first validation date into training
+    mask = (df["date"] >= pd.to_datetime(start_date)) & (df["date"] < pd.to_datetime(end_date))
     df = df.loc[mask]
 
     # pivot into matrix [dates × tickers]
@@ -164,7 +185,8 @@ def graphical_lasso_precision(
 def graphical_lasso_edges(panel_df, date, window, alpha=0.01):
     end_date = date
     start_date = end_date - pd.Timedelta(days=window * 2)
-    hist = panel_df[(panel_df["date"] > start_date) & (panel_df["date"] <= end_date)]
+    # use end_date as exclusive upper bound to avoid including the first validation day
+    hist = panel_df[(panel_df["date"] > start_date) & (panel_df["date"] < end_date)]
 
     if hist.empty:
         return []

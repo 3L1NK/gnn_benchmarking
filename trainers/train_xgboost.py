@@ -248,7 +248,36 @@ class XGBoostTrainer:
             self.config["training"]["test_start"],
         )
 
-        X = self.df[self.feat_cols].values.astype(float)
+        # Optional cross-sectional (per-date) z-score normalization for raw features.
+        cs_cfg = self.config.get("xgb", {})
+        cs_zscore = bool(cs_cfg.get("cross_sectional_zscore", False))
+
+        raw_mat = self.df[self.feat_cols].to_numpy(dtype=float, copy=True)
+        dates_arr = self.df["date"].values
+
+        if cs_zscore:
+            norm_raw = np.zeros_like(raw_mat, dtype=float)
+            uniq_dates, inv_idx = np.unique(dates_arr, return_inverse=True)
+            for i, d in enumerate(uniq_dates):
+                idxs = np.where(inv_idx == i)[0]
+                block = raw_mat[idxs].astype(float, copy=True)
+                col_mean = np.nanmean(block, axis=0)
+                col_std = np.nanstd(block, axis=0)
+                col_std[col_std == 0] = 1.0
+                inds_nan = np.isnan(block)
+                if inds_nan.any():
+                    block[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
+                z = (block - col_mean) / (col_std + 1e-8)
+                norm_raw[idxs] = z
+            X = norm_raw
+        else:
+            # minimal imputation to avoid NaNs: fill with global column mean
+            col_mean = np.nanmean(raw_mat, axis=0)
+            inds_nan = np.isnan(raw_mat)
+            if inds_nan.any():
+                raw_mat[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
+            X = raw_mat
+
         y = self.df["target"].values.astype(float)
 
         cache_id = cache_key(
@@ -278,6 +307,15 @@ class XGBoostTrainer:
                 "X_test": X_test, "y_test": y_test,
             })
             print(f"[xgb_raw] saved splits to cache {cache_file}")
+
+        # Log daily coverage in test set for defendability checks
+        try:
+            test_dates = self.df.loc[test_mask, "date"]
+            counts = test_dates.value_counts().sort_index()
+            if not counts.empty:
+                print(f"[xgb_raw] test tickers per day: mean={counts.mean():.1f}, min={counts.min()}, max={counts.max()}")
+        except Exception:
+            pass
 
         # -----------------------
         # 2. Read config
@@ -589,24 +627,33 @@ class XGBoostTrainer:
 
         tab = pd.DataFrame(rows)
 
-        # Per-date cross-sectional z-score normalization for raw features
+        # Per-date cross-sectional z-score normalization for raw features (optional)
+        cs_cfg = self.config.get("xgb", {})
+        cs_zscore = bool(cs_cfg.get("cross_sectional_zscore", False))
+
         raw_mat = np.stack(tab["raw_feat"].values)
         dates = tab["date"].values
-        norm_raw = np.zeros_like(raw_mat, dtype=float)
-        uniq_dates, inv_idx = np.unique(dates, return_inverse=True)
-        for i, d in enumerate(uniq_dates):
-            idxs = np.where(inv_idx == i)[0]
-            block = raw_mat[idxs]
-            # compute mean/std across tickers for each feature column
-            col_mean = np.nanmean(block, axis=0)
-            col_std = np.nanstd(block, axis=0)
-            col_std[col_std == 0] = 1.0
-            # replace NaNs in block with column mean before z-scoring
-            inds_nan = np.isnan(block)
+        if cs_zscore:
+            norm_raw = np.zeros_like(raw_mat, dtype=float)
+            uniq_dates, inv_idx = np.unique(dates, return_inverse=True)
+            for i, d in enumerate(uniq_dates):
+                idxs = np.where(inv_idx == i)[0]
+                block = raw_mat[idxs].astype(float, copy=True)
+                col_mean = np.nanmean(block, axis=0)
+                col_std = np.nanstd(block, axis=0)
+                col_std[col_std == 0] = 1.0
+                inds_nan = np.isnan(block)
+                if inds_nan.any():
+                    block[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
+                z = (block - col_mean) / (col_std + 1e-8)
+                norm_raw[idxs] = z
+        else:
+            # minimal imputation to avoid NaNs when not z-scoring: fill with global col mean
+            norm_raw = raw_mat.astype(float, copy=True)
+            col_mean = np.nanmean(norm_raw, axis=0)
+            inds_nan = np.isnan(norm_raw)
             if inds_nan.any():
-                block[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
-            z = (block - col_mean) / (col_std + 1e-8)
-            norm_raw[idxs] = z
+                norm_raw[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
 
         # combine normalized raw features and embeddings
         emb_stack = np.stack(tab["emb"].values)
@@ -634,12 +681,32 @@ class XGBoostTrainer:
         if missing_emb_tickers:
             print(f"[xgb_node2vec] Warning: {len(missing_emb_tickers)} tickers missing embeddings; imputing zeros.")
 
-        # report missing coverage per split (train/val/test)
+        # report missing coverage per split (train/val/test) and percent missing in test
         all_tickers = sorted(self.df["ticker"].unique())
         missing_global = [t for t in all_tickers if t not in ticker_to_idx]
         if missing_global:
             print(f"[xgb_node2vec] Warning: {len(missing_global)} universe tickers have no embedding mapping (ticker_to_idx size={len(ticker_to_idx)}, universe size={len(all_tickers)})")
             print(f"[xgb_node2vec] Sample missing tickers: {missing_global[:10]}")
+
+        # time masks are needed even when loading cached splits
+        train_mask, val_mask, test_mask = _time_masks(
+            tab["date"],
+            self.config["training"]["val_start"],
+            self.config["training"]["test_start"],
+        )
+
+        try:
+            test_counts = tab.loc[test_mask].groupby("date").size()
+            if not test_counts.empty:
+                print(f"[xgb_node2vec] test tickers per day: mean={test_counts.mean():.1f}, min={test_counts.min()}, max={test_counts.max()}")
+            # percent missing embeddings in test rows
+            test_tab = tab.loc[test_mask]
+            if len(test_tab) > 0:
+                missing_in_test = (~test_tab["ticker"].isin(ticker_to_idx)).sum()
+                pct_missing = 100.0 * missing_in_test / len(test_tab)
+                print(f"[xgb_node2vec] percent missing embeddings in test rows: {pct_missing:.2f}% ({missing_in_test}/{len(test_tab)})")
+        except Exception:
+            pass
 
         # time masks are needed even when loading cached splits
         train_mask, val_mask, test_mask = _time_masks(
@@ -805,10 +872,13 @@ class XGBoostTrainer:
         set_seed(42)
 
         val_start = self.config["training"]["val_start"]
+        # subtract one day so Graphical Lasso training window does not include the
+        # first validation date (avoid inclusion leakage)
+        end_date_for_gl = pd.to_datetime(val_start) - pd.Timedelta(days=1)
         _, _, _, adj = graphical_lasso_precision(
             self.df,
             start_date=self.config["data"]["start_date"],
-            end_date=val_start,
+            end_date=end_date_for_gl,
             alpha=self.config.get("graphlasso_alpha", 0.01),
         )
 
@@ -859,10 +929,13 @@ class XGBoostTrainer:
         returns_df = self.df[["date", "ticker", "log_ret_1d"]].copy()
 
         val_start = self.config["training"]["val_start"]
+        # subtract one day so Graphical Lasso training window does not include the
+        # first validation date (avoid inclusion leakage)
+        end_date_for_gl = pd.to_datetime(val_start) - pd.Timedelta(days=1)
         _, _, _, adj = graphical_lasso_precision(
             returns_df,
             start_date=self.config["data"]["start_date"],
-            end_date=val_start,
+            end_date=end_date_for_gl,
             alpha=self.config.get("graphlasso_alpha", 0.01),
         )
 
