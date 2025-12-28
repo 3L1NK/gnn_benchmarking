@@ -148,6 +148,16 @@ class XGBoostTrainer:
             "granger_xgb": self.train_granger_xgb,
         }
 
+    def _groups_from_dates(self, dates, mask):
+        """Return a list of group sizes per date in chronological order for rows where mask is True."""
+        ds = pd.to_datetime(pd.Series(dates))
+        sub = ds[mask]
+        if sub.empty:
+            return []
+        # groupby on values gives groups in sorted order
+        grp = sub.groupby(sub).size().tolist()
+        return grp
+
     def run(self):
         key = self.config["model"]["type"].lower()
 
@@ -155,20 +165,12 @@ class XGBoostTrainer:
         eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
             self.config,
             rebuild=self.rebuild_cache,
+            align_start_date=self.config["training"]["test_start"],
         )
-        # align to test window for fair comparison
-        test_start = pd.to_datetime(self.config["training"]["test_start"])
-        mask_bh = eq_bh_full.index >= test_start
         self.bh_curve = eq_bh_full
         self.bh_ret = ret_bh_full
-        from utils.metrics import sharpe_ratio, sortino_ratio
-        stats_bh_window = {
-            "final_value": float(eq_bh_full.loc[mask_bh].iloc[-1]) if mask_bh.any() else float("nan"),
-            "sharpe": sharpe_ratio(ret_bh_full[mask_bh], self.config["evaluation"]["risk_free_rate"]),
-            "sortino": sortino_ratio(ret_bh_full[mask_bh], self.config["evaluation"]["risk_free_rate"]),
-        }
-        self.bh_stats = stats_bh_window
-        print("[baseline] global buy-and-hold stats (test window)", stats_bh_window)
+        self.bh_stats = stats_bh
+        print("[baseline] global buy-and-hold stats (aligned to test window)", stats_bh)
 
         try:
             result = self._registry[key]()   # train the chosen XGB variant
@@ -287,16 +289,30 @@ class XGBoostTrainer:
         fixed_params = model_cfg.get("params", {})
         param_grid = tuning_cfg.get("param_grid", {})
 
+        # support ranking objectives via XGBRanker when configured
+        obj = model_cfg.get("objective", "reg:squarederror")
+        is_rank = isinstance(obj, str) and obj.startswith("rank")
+
         # -----------------------
         # 3. Model builder
         # -----------------------
         def make_model(params):
-            return XGBRegressor(
-                objective="reg:squarederror",
-                tree_method="hist",
-                random_state=42,
-                **params,
-            )
+            if is_rank:
+                from xgboost import XGBRanker
+
+                return XGBRanker(
+                    objective=obj,
+                    tree_method="hist",
+                    random_state=42,
+                    **params,
+                )
+            else:
+                return XGBRegressor(
+                    objective=obj,
+                    tree_method="hist",
+                    random_state=42,
+                    **params,
+                )
 
         # -----------------------
         # 4. Hyperparameter logic
@@ -322,7 +338,12 @@ class XGBoostTrainer:
 
             for params in candidates:
                 model = make_model(params)
-                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+                if is_rank:
+                    train_group = self._groups_from_dates(self.df["date"].values, train_mask)
+                    val_group = self._groups_from_dates(self.df["date"].values, val_mask)
+                    model.fit(X_train, y_train, group=train_group, eval_set=[(X_val, y_val)], eval_group=[val_group], verbose=False)
+                else:
+                    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
                 preds = model.predict(X_val)
                 rmse = root_mean_squared_error(y_val, preds)
@@ -346,13 +367,25 @@ class XGBoostTrainer:
         y_train_full = np.concatenate([y_train, y_val])
 
         model = make_model(best_params)
-
-        model.fit(
-            X_train_full,
-            y_train_full,
-            eval_set=[(X_val, y_val)],
-            verbose=50,
-        )
+        if is_rank:
+            train_group = self._groups_from_dates(self.df["date"].values, train_mask)
+            val_group = self._groups_from_dates(self.df["date"].values, val_mask)
+            train_group_full = list(train_group) + list(val_group)
+            model.fit(
+                X_train_full,
+                y_train_full,
+                group=train_group_full,
+                eval_set=[(X_val, y_val)],
+                eval_group=[val_group],
+                verbose=50,
+            )
+        else:
+            model.fit(
+                X_train_full,
+                y_train_full,
+                eval_set=[(X_val, y_val)],
+                verbose=50,
+            )
 
         preds_test = model.predict(X_test)
 
@@ -527,35 +560,86 @@ class XGBoostTrainer:
             cache_save(emb_cache, {"emb_matrix": emb_matrix, "ticker_to_idx": ticker_to_idx})
             print(f"[xgb_node2vec] saved embeddings to cache {emb_cache}")
 
-        # Standardize embeddings separately and scale down so they act as weak structural priors.
+        # Standardize embeddings separately and scale them by a configurable factor
+        emb_scale = self.config["model"].get("emb_scale", 0.2)
         emb_mean = emb_matrix.mean(axis=0, keepdims=True)
         emb_std = emb_matrix.std(axis=0, keepdims=True) + 1e-8
-        emb_matrix = 0.2 * (emb_matrix - emb_mean) / emb_std
+        emb_matrix = emb_scale * (emb_matrix - emb_mean) / emb_std
 
+        # Build rows with raw features and embeddings separately so we can
+        # apply per-date cross-sectional normalization to raw features.
         rows = []
         for _, row in self.df.iterrows():
             t = row["ticker"]
-            if t not in ticker_to_idx:
-                continue
-
-            available_cols = [c for c in self.feat_cols if c in row.index]
-            if not available_cols:
-                continue
-            f = row[available_cols].values.astype(float)
-            vec = emb_matrix[ticker_to_idx[t]]
-            full_feat = np.concatenate([f, vec])
+            # gather raw features (keep NaNs for now so we can handle them per-date)
+            f = row.reindex(self.feat_cols).to_numpy(dtype=float, copy=False)
+            if t in ticker_to_idx:
+                vec = emb_matrix[ticker_to_idx[t]]
+            else:
+                # impute missing embeddings with zero vector and warn later
+                vec = np.zeros(emb_matrix.shape[1], dtype=float)
 
             rows.append({
                 "date": row["date"],
                 "ticker": t,
                 "target": row["target"],
-                "features": full_feat,
+                "raw_feat": f,
+                "emb": vec,
             })
 
         tab = pd.DataFrame(rows)
 
-        X = np.stack(tab["features"].values)
+        # Per-date cross-sectional z-score normalization for raw features
+        raw_mat = np.stack(tab["raw_feat"].values)
+        dates = tab["date"].values
+        norm_raw = np.zeros_like(raw_mat, dtype=float)
+        uniq_dates, inv_idx = np.unique(dates, return_inverse=True)
+        for i, d in enumerate(uniq_dates):
+            idxs = np.where(inv_idx == i)[0]
+            block = raw_mat[idxs]
+            # compute mean/std across tickers for each feature column
+            col_mean = np.nanmean(block, axis=0)
+            col_std = np.nanstd(block, axis=0)
+            col_std[col_std == 0] = 1.0
+            # replace NaNs in block with column mean before z-scoring
+            inds_nan = np.isnan(block)
+            if inds_nan.any():
+                block[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
+            z = (block - col_mean) / (col_std + 1e-8)
+            norm_raw[idxs] = z
+
+        # combine normalized raw features and embeddings
+        emb_stack = np.stack(tab["emb"].values)
+
+        # Debug / diagnostics: report embedding coverage and relative scale
+        # Embeddings have already been standardized and scaled by `emb_scale` above.
+        try:
+            mean_emb_l2 = float(np.linalg.norm(emb_stack, axis=1).mean())
+        except Exception:
+            mean_emb_l2 = float(np.nan)
+
+        # mean absolute entry in normalized raw features (should be ~O(1) after z-scoring)
+        mean_abs_raw = float(np.nanmean(np.abs(norm_raw))) if norm_raw.size else float(np.nan)
+
+        print(f"[xgb_node2vec] emb_scale={emb_scale}, emb_matrix.shape={emb_matrix.shape}, emb_stack.shape={emb_stack.shape}")
+        print(f"[xgb_node2vec] mean emb L2 (post-scale)={mean_emb_l2:.6f}, mean abs raw feature={mean_abs_raw:.6f}")
+        if not np.isnan(mean_abs_raw) and mean_abs_raw > 0:
+            print(f"[xgb_node2vec] emb/raw magnitude ratio={mean_emb_l2/mean_abs_raw:.6f}")
+
+        X = np.hstack([norm_raw, emb_stack])
         y = tab["target"].values.astype(float)
+
+        # warn if some tickers had missing embeddings
+        missing_emb_tickers = [t for t in tab["ticker"].unique() if t not in ticker_to_idx]
+        if missing_emb_tickers:
+            print(f"[xgb_node2vec] Warning: {len(missing_emb_tickers)} tickers missing embeddings; imputing zeros.")
+
+        # report missing coverage per split (train/val/test)
+        all_tickers = sorted(self.df["ticker"].unique())
+        missing_global = [t for t in all_tickers if t not in ticker_to_idx]
+        if missing_global:
+            print(f"[xgb_node2vec] Warning: {len(missing_global)} universe tickers have no embedding mapping (ticker_to_idx size={len(ticker_to_idx)}, universe size={len(all_tickers)})")
+            print(f"[xgb_node2vec] Sample missing tickers: {missing_global[:10]}")
 
         # time masks are needed even when loading cached splits
         train_mask, val_mask, test_mask = _time_masks(
@@ -595,19 +679,115 @@ class XGBoostTrainer:
             })
             print(f"[xgb_node2vec] saved feature splits to cache {feat_cache}")
 
-        model = XGBRegressor(
-            n_estimators=600,
-            learning_rate=0.05,
-            max_depth=4,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            objective="reg:squarederror",
-            tree_method="hist",
-            random_state=42,
-        )
+        # Optional tuning similar to xgb_raw
+        model_cfg = self.config["model"]
+        tuning_cfg = self.config.get("tuning", {})
+        use_tuning = tuning_cfg.get("enabled", False)
+        fixed_params = model_cfg.get("params", {
+            "n_estimators": 600,
+            "learning_rate": 0.05,
+            "max_depth": 4,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+        })
+        param_grid = tuning_cfg.get("param_grid", {})
 
-        model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
-        preds_test = model.predict(X_test)
+        obj = model_cfg.get("objective", "reg:squarederror")
+        is_rank = isinstance(obj, str) and obj.startswith("rank")
+
+        def make_model(params):
+            if is_rank:
+                from xgboost import XGBRanker
+
+                return XGBRanker(
+                    objective=obj,
+                    tree_method="hist",
+                    random_state=42,
+                    **params,
+                )
+            else:
+                return XGBRegressor(
+                    objective=obj,
+                    tree_method="hist",
+                    random_state=42,
+                    **params,
+                )
+
+        if use_tuning and param_grid:
+            print("XGB Node2Vec tuning enabled")
+            best_params = None
+            best_rmse = float("inf")
+            keys = list(param_grid.keys())
+            candidates = []
+            from itertools import product
+            for values in product(*param_grid.values()):
+                overrides = dict(zip(keys, values))
+                candidates.append({**fixed_params, **overrides})
+            for params in candidates:
+                mdl = make_model(params)
+                if is_rank:
+                    train_group = self._groups_from_dates(tab["date"].values, train_mask)
+                    val_group = self._groups_from_dates(tab["date"].values, val_mask)
+                    mdl.fit(X_train, y_train, group=train_group, eval_set=[(X_val, y_val)], eval_group=[val_group], verbose=False)
+                else:
+                    mdl.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+
+                preds = mdl.predict(X_val)
+                rmse = root_mean_squared_error(y_val, preds)
+                print("Params", params, "RMSE", rmse)
+                if rmse < best_rmse:
+                    best_rmse = rmse
+                    best_params = params
+            print("Best XGB Node2Vec params:", best_params)
+        else:
+            best_params = fixed_params
+
+        model = make_model(best_params)
+        if is_rank:
+            train_group = self._groups_from_dates(tab["date"].values, train_mask)
+            val_group = self._groups_from_dates(tab["date"].values, val_mask)
+            train_group_full = list(train_group) + list(val_group)
+            X_train_full = np.concatenate([X_train, X_val])
+            y_train_full = np.concatenate([y_train, y_val])
+            model.fit(X_train_full, y_train_full, group=train_group_full, eval_set=[(X_val, y_val)], eval_group=[val_group], verbose=50)
+            preds_test = model.predict(X_test)
+        else:
+            model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
+            preds_test = model.predict(X_test)
+
+        # Feature importance diagnostics: show whether embeddings contribute.
+        try:
+            # Build feature names: raw features then emb_0..emb_{d-1}
+            raw_names = self.feat_cols
+            emb_dim = emb_stack.shape[1]
+            emb_names = [f"emb_{i}" for i in range(emb_dim)]
+            feature_names = raw_names + emb_names
+
+            if hasattr(model, "feature_importances_"):
+                importances = model.feature_importances_
+            else:
+                # fallback for some xgb wrappers
+                booster = getattr(model, "get_booster", lambda: None)()
+                if booster is not None:
+                    fmap = booster.get_score(importance_type="weight")
+                    importances = np.array([fmap.get(fn, 0.0) for fn in feature_names], dtype=float)
+                else:
+                    importances = None
+
+            if importances is not None:
+                fi = list(zip(feature_names, importances))
+                fi_sorted = sorted(fi, key=lambda x: x[1], reverse=True)
+                print("[xgb_node2vec] Top feature importances:")
+                for n, v in fi_sorted[:20]:
+                    print(f"  {n}: {v:.6f}")
+                # save to CSV
+                try:
+                    import pandas as _pd
+                    _pd.DataFrame(fi_sorted, columns=["feature", "importance"]).to_csv(self.out_dir / "xgb_node2vec_feature_importances.csv", index=False)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         tab_test = tab.loc[test_mask, ["date", "ticker"]].copy()
         tab_test["pred"] = preds_test
@@ -734,14 +914,67 @@ class XGBoostTrainer:
 
         val_start = self.config["training"]["val_start"]
         mask = returns_df["date"] < pd.to_datetime(val_start)
-        edges = granger_edges(returns_df.loc[mask], max_lag=2, p_threshold=0.05)
 
+        # allow configuring Granger params from YAML
+        granger_cfg = self.config.get("granger", {})
+        max_lag = int(granger_cfg.get("max_lag", 2))
+        p_threshold = float(granger_cfg.get("p_threshold", 0.05))
+
+        edges = granger_edges(returns_df.loc[mask], max_lag=max_lag, p_threshold=p_threshold)
+
+        # log top-k edges for quick sanity check
+        if edges:
+            top_k = min(10, len(edges))
+            sorted_edges = sorted(edges, key=lambda x: x[2], reverse=True)[:top_k]
+            print(f"[granger_xgb] Top {top_k} Granger edges (u,v,weight):")
+            for u, v, w in sorted_edges:
+                print(f"  {u} -> {v}: {w:.4f}")
+
+        # Build adjacency for smoothing. granger_edges now returns weighted directed edges.
+        # We'll symmetrize and row-normalize weights so smoothing is stable.
         adj = {}
         for u, v, w in edges:
+            if u == v:
+                continue
             adj.setdefault(u, []).append((v, w))
-            adj.setdefault(v, [])
+            adj.setdefault(v, []).append((u, w))
 
-        df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=0.5)
+        # If edges exist, row-normalize neighbor weights to sum to 1 per node.
+        if adj:
+            for node, nbrs in list(adj.items()):
+                # sum weights, avoid zero
+                total = sum(abs(w) for _, w in nbrs) + 1e-12
+                adj[node] = [(nb, float(w) / total) for nb, w in nbrs]
+        else:
+            # fallback: use sector/industry priors when Granger finds no edges
+            print("[granger_xgb] Warning: no Granger edges found; falling back to sector/industry priors.")
+            universe_path = Path("data/processed/universe.csv")
+            if universe_path.exists():
+                universe_df = pd.read_csv(universe_path)
+                sector_map = dict(zip(universe_df["ticker"], universe_df.get("sector", pd.Series(index=universe_df.index))))
+                industry_map = dict(zip(universe_df["ticker"], universe_df.get("industry", pd.Series(index=universe_df.index))))
+                # build weak priors
+                universe_list = universe_df["ticker"].unique().tolist()
+                for i, ti in enumerate(universe_list):
+                    for j, tj in enumerate(universe_list):
+                        if i == j:
+                            continue
+                        # sector adjacency
+                        si = sector_map.get(ti)
+                        sj = sector_map.get(tj)
+                        if si is not None and sj is not None and si == sj:
+                            adj.setdefault(ti, []).append((tj, 0.2))
+                        # industry adjacency
+                        ii = industry_map.get(ti)
+                        ij = industry_map.get(tj)
+                        if ii is not None and ij is not None and ii == ij:
+                            adj.setdefault(ti, []).append((tj, 0.1))
+            # normalize fallback
+            for node, nbrs in list(adj.items()):
+                total = sum(abs(w) for _, w in nbrs) + 1e-12
+                adj[node] = [(nb, float(w) / total) for nb, w in nbrs]
+
+        df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=self.config.get("graph_smooth_alpha", 0.5))
 
         X = df_smooth[self.feat_cols + smooth_cols].values
         y = df_smooth["target"].values
