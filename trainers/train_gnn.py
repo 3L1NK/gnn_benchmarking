@@ -12,6 +12,14 @@ from torch_geometric.loader import DataLoader as GeoDataLoader
 from torch.cuda.amp import GradScaler
 
 from models.gnn_model import StaticGNN
+try:
+    from models.tgcn_model import StaticTGCN
+except Exception:
+    StaticTGCN = None
+try:
+    from models.tgat_model import StaticTGAT
+except Exception:
+    StaticTGAT = None
 from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
@@ -372,6 +380,32 @@ def _split_snapshots_by_date(snapshots, dates, val_start, test_start):
     return train_list, val_list, test_list
 
 
+def _target_stats(snaps):
+    """Compute mean/std of targets over valid nodes in training set for scaling."""
+    ys = []
+    for g in snaps:
+        if not hasattr(g, "valid_mask"):
+            continue
+        mask = g.valid_mask
+        y = g.y
+        if mask is None or y is None:
+            continue
+        if mask.numel() != y.numel():
+            continue
+        mask = mask & torch.isfinite(y)
+        if mask.sum() == 0:
+            continue
+        ys.append(y[mask])
+    if not ys:
+        return 0.0, 1.0
+    all_y = torch.cat(ys)
+    mean = float(all_y.mean().item())
+    std = float(all_y.std().item())
+    if std < 1e-6:
+        std = 1.0
+    return mean, std
+
+
 def train_gnn(config):
     set_seed(42)
     device = get_device(config["training"]["device"])
@@ -487,6 +521,10 @@ def train_gnn(config):
         snapshots, dates, config["training"]["val_start"], config["training"]["test_start"]
     )
 
+    # Target scaling to avoid collapse to tiny constants
+    tgt_mean, tgt_std = _target_stats(train_snaps)
+    print(f"[gnn] target scaling mean={tgt_mean:.6f} std={tgt_std:.6f}")
+
     if not train_snaps:
         raise ValueError("No training snapshots available. Check the date range and lookback window.")
     if not val_snaps:
@@ -506,32 +544,52 @@ def train_gnn(config):
     val_loader = GeoDataLoader(val_snaps, **{**loader_kwargs, "shuffle": False})
     test_loader = GeoDataLoader(test_snaps, **{**loader_kwargs, "shuffle": False})
 
-    # Reduce GCN depth to avoid oversmoothing: default to 1 layer, allow 2 only if explicitly requested
     requested_layers = int(config["model"].get("num_layers", 1))
     model_type = config["model"]["type"].lower()
-    if model_type == "gcn":
-        if requested_layers == 2:
-            num_layers = 2
-        else:
-            num_layers = 1
-    else:
-        num_layers = min(requested_layers, 2)
+    num_layers = max(1, min(requested_layers, 3))
+    if model_type == "gcn" and requested_layers > 2:
+        print("[gnn] Warning: GCN depth >2 can over-smooth; clamping to at most 3 layers.")
 
     # Ensure dropout enabled and non-zero for GCN to reduce oversmoothing
     dropout_val = float(config["model"].get("dropout", 0.0))
     if model_type == "gcn" and dropout_val <= 0.0:
         print("[gnn] Warning: forcing non-zero dropout=0.2 for GCN to reduce oversmoothing")
         dropout_val = 0.2
+    attn_dropout_val = float(config["model"].get("attn_dropout", dropout_val))
 
-    model = StaticGNN(
-        gnn_type=config["model"]["type"],
-        input_dim=len(feat_cols),
-        hidden_dim=config["model"]["hidden_dim"],
-        num_layers=num_layers,
-        dropout=dropout_val,
-        heads=config["model"].get("heads", 1),
-        use_residual=True,
-    ).to(device)
+    # Allow temporal GNN (TGCN) as a model option. Use StaticTGCN wrapper
+    # to keep compatibility with the training loop signature.
+    mtype = config["model"]["type"].lower()
+    if mtype == "tgcn":
+        if StaticTGCN is None:
+            raise RuntimeError("TGCN model support is unavailable (missing dependency).")
+        model = StaticTGCN(
+            input_dim=len(feat_cols),
+            hidden_dim=config["model"]["hidden_dim"],
+            dropout=dropout_val,
+        ).to(device)
+    elif mtype == "tgat":
+        if StaticTGAT is None:
+            raise RuntimeError("TGAT model support is unavailable (missing dependency).")
+        # allow requesting more layers for TGAT-like model
+        model = StaticTGAT(
+            input_dim=len(feat_cols),
+            hidden_dim=config["model"]["hidden_dim"],
+            num_layers=int(config["model"].get("num_layers", 2)),
+            heads=int(config["model"].get("heads", 2)),
+            dropout=dropout_val,
+        ).to(device)
+    else:
+        model = StaticGNN(
+            gnn_type=config["model"]["type"],
+            input_dim=len(feat_cols),
+            hidden_dim=config["model"]["hidden_dim"],
+            num_layers=num_layers,
+            dropout=dropout_val,
+            attn_dropout=attn_dropout_val,
+            heads=config["model"].get("heads", 1),
+            use_residual=True,
+        ).to(device)
 
     # If using GAT with weighted edges enabled, warn that GATConv ignores edge_weight
     try:
@@ -561,6 +619,8 @@ def train_gnn(config):
     model_path = out_dir / f"best_{config['model']['type']}.pt"
 
     max_epochs = config["training"]["max_epochs"]
+    tgt_mean_t = torch.tensor(tgt_mean, device=device)
+    tgt_std_t = torch.tensor(tgt_std, device=device)
 
     for epoch in range(max_epochs):
         model.train()
@@ -574,7 +634,8 @@ def train_gnn(config):
                 mask = batch.valid_mask & torch.isfinite(batch.y)
                 if mask.sum() == 0:
                     continue
-                loss = loss_fn(logits[mask], batch.y[mask])
+                target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                loss = loss_fn(logits[mask], target_scaled[mask])
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["training"]["gradient_clip"])
             scaler.step(optimizer)
@@ -591,7 +652,8 @@ def train_gnn(config):
                 mask = batch.valid_mask & torch.isfinite(batch.y)
                 if mask.sum() == 0:
                     continue
-                loss = loss_fn(logits[mask], batch.y[mask])
+                target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                loss = loss_fn(logits[mask], target_scaled[mask])
                 val_losses.append(loss.detach())
 
         mean_train = float(torch.stack(train_losses).mean().item()) if train_losses else float("nan")
@@ -619,7 +681,7 @@ def train_gnn(config):
         for batch in test_loader:
             batch = batch.to(device, non_blocking=True)
             logits = model(batch.x, batch.edge_index, batch.edge_weight)
-            pred = logits.cpu().numpy()
+            pred = (logits * tgt_std_t + tgt_mean_t).cpu().numpy()
             y_ret = batch.y.cpu().numpy()
             valid = batch.valid_mask.cpu().numpy()
             tickers_raw = batch.tickers

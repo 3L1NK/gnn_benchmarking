@@ -21,6 +21,7 @@ class StaticGNN(nn.Module):
         hidden_dim: int,
         num_layers: int,
         dropout: float = 0.0,
+        attn_dropout: float = 0.0,
         heads: int = 4,
         use_residual: bool = True,
     ):
@@ -40,10 +41,11 @@ class StaticGNN(nn.Module):
         res_projs = []
         in_dim = input_dim
 
-        # keep shallow to avoid over-smoothing
-        num_layers = max(1, min(num_layers, 2))
+        # keep shallow to avoid over-smoothing; allow up to 3 when explicitly requested
+        num_layers = max(1, min(num_layers, 3))
         if self.gnn_type == "gat":
-            heads = max(1, min(heads, 2))
+            # allow modest multi-head attention while guarding against memory blowups
+            heads = max(1, min(heads, 4))
 
         for layer in range(num_layers):
             if self.gnn_type == "gcn":
@@ -55,7 +57,13 @@ class StaticGNN(nn.Module):
                 # any edge weighting is therefore ignored by the attention implementation.
                 # If you need weighted attention, implement custom attention or
                 # construct edge features used by the convolution.
-                conv = GATConv(in_dim, hidden_dim, heads=heads, concat=False)
+                conv = GATConv(
+                    in_dim,
+                    hidden_dim,
+                    heads=heads,
+                    concat=False,
+                    dropout=max(0.0, float(attn_dropout)),
+                )
                 out_dim = hidden_dim
 
             convs.append(conv)

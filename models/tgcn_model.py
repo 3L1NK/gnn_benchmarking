@@ -23,6 +23,7 @@ class TemporalGCNModel(nn.Module):
     def __init__(self, input_dim, hidden_dim, dropout):
         super().__init__()
         self.tgcn = TGCN(in_channels=input_dim, out_channels=hidden_dim)
+        
         self.dropout = nn.Dropout(dropout)
         self.out = nn.Linear(hidden_dim, 1)
 
@@ -32,3 +33,26 @@ class TemporalGCNModel(nn.Module):
         h_t = self.dropout(h_t)
         logits = self.out(h_t).squeeze(-1)
         return logits, h_t
+
+
+class StaticTGCN(nn.Module):
+    """
+    Thin wrapper around the temporal TGCN cell to expose a static-like API
+    compatible with the existing training loop. It runs the TGCN cell with
+    a zeroed/absent hidden state and returns only the logits tensor so the
+    trainer can call `model(x, edge_index, edge_weight)` as with other models.
+    """
+
+    def __init__(self, input_dim, hidden_dim, dropout=0.0):
+        super().__init__()
+        # reuse the TemporalGCNModel components but keep a simple forward
+        self.cell = TGCN(in_channels=input_dim, out_channels=hidden_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.head = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x, edge_index, edge_weight=None):
+        # The TGCN cell expects edge_weight; pass None if not provided.
+        h = self.cell(x, edge_index, edge_weight)
+        h = self.dropout(h)
+        out = self.head(h).squeeze(-1)
+        return out

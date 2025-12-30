@@ -1,0 +1,17 @@
+include:
+  - "../models/tgcn_base.yaml"
+  - "../default.yaml"
+
+# Ablation B: loosen max_edge_weight to allow slightly stronger merged edges
+graph:
+  use_corr: true
+  corr_top_k: 10
+  w_corr: 1.0
+  max_edge_weight: 1.25
+
+training:
+  max_epochs: 30
+  patience: 5
+
+evaluation:
+  top_k: 20

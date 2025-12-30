@@ -1,0 +1,33 @@
+experiment_name: gcn_sparse_scaled_v2
+
+include: "configs/default.yaml"
+
+model:
+  family: gnn
+  type: gcn
+  hidden_dim: 96
+  num_layers: 2
+  dropout: 0.2
+
+data:
+  target_horizon: 5
+  corr_window: 90
+  corr_threshold: 0.55
+
+graph:
+  use_corr: true
+  use_sector: true
+  use_granger: false
+  corr_top_k: 4
+  corr_min_periods: 45
+  sector_top_k: 2
+  w_corr: 1.0
+  w_sector: 0.25
+  max_edge_weight: 1.0
+
+training:
+  batch_size: 4
+  lr: 0.001
+  weight_decay: 0.00001
+  max_epochs: 180
+  patience: 50
