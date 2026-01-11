@@ -16,4 +16,6 @@ training:
   lr: 0.0003
 
 data:
-  target_horizon: 5  # weekly horizon for consistency
+  target_horizon: 1  # daily horizon for consistent labels
+  target_type: regression
+  target_name: log_return

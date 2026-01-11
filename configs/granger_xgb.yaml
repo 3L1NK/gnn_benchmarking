@@ -5,6 +5,8 @@ data:
   start_date: "2010-01-01"
   end_date: "2024-12-31"
   target_horizon: 1
+  target_type: regression
+  target_name: log_return
 
 model:
   family: xgboost

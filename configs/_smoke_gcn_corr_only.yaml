@@ -7,6 +7,8 @@ data:
   start_date: "2018-01-01"
   end_date: "2018-03-31"
   target_horizon: 1
+  target_type: regression
+  target_name: log_return
   lookback_window: 20
   corr_window: 20
   corr_threshold: 0.4

@@ -19,6 +19,7 @@ from utils.plot import (
 from utils.seeds import set_seed
 from utils.cache import cache_load, cache_save, cache_key, cache_path
 from utils.baseline import get_global_buy_and_hold
+from utils.targets import build_target
 from xgboost import XGBRegressor
 from itertools import product
 from sklearn.metrics import root_mean_squared_error
@@ -40,7 +41,6 @@ def _build_feature_panel(config):
     price_file = config["data"]["price_file"]
     start = config["data"]["start_date"]
     end = config["data"]["end_date"]
-    horizon = config["data"]["target_horizon"]
 
     df = load_price_panel(price_file, start, end)
     feat_cols = [c for c in default_feat_cols if c in df.columns]
@@ -50,8 +50,7 @@ def _build_feature_panel(config):
         df, feat_cols = add_technical_features(df)
         feat_cols = [c for c in default_feat_cols if c in df.columns]
 
-    df["target"] = df.groupby("ticker")["log_ret_1d"].shift(-horizon)
-    df = df.dropna(subset=["target"])
+    df, _ = build_target(df, config, target_col="target")
 
     return df, feat_cols
 

@@ -2,7 +2,9 @@ data:
   price_file: "data/processed/prices.parquet"
   start_date: "2000-01-01"
   end_date: "2024-12-31"
-  target_horizon: 1 # default daily; override per model if needed
+  target_horizon: 1  # daily horizon for consistent labels
+  target_type: regression
+  target_name: log_return
   lookback_window: 60
   corr_window: 60
   corr_threshold: 0.4

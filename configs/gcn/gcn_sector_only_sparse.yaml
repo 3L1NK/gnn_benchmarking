@@ -10,7 +10,9 @@ model:
   dropout: 0.2
 
 data:
-  target_horizon: 5
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
   corr_window: 90
   corr_threshold: 0.55
 

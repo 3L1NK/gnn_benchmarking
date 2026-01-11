@@ -11,4 +11,6 @@ model:
 include: "configs/default.yaml"
 
 data:
-  target_horizon: 5  # weekly horizon to reduce noise
+  target_horizon: 1  # daily horizon for consistent labels
+  target_type: regression
+  target_name: log_return

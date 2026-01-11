@@ -36,6 +36,7 @@ from utils.plot import (
 from utils.cache import cache_load, cache_save, cache_key, cache_path
 from utils.device import get_device, default_num_workers
 from utils.sanity import check_tensor
+from utils.targets import build_target
 
 
 class TensorLSTMDataset(Dataset):
@@ -52,20 +53,20 @@ class TensorLSTMDataset(Dataset):
         return self.X[idx], self.y[idx]
 
 
-def _build_sequences(df, feat_cols, lookback, horizon):
+def _build_sequences(df, feat_cols, lookback, target_col):
     """
     Convert per-ticker time series into fixed-length sequences and targets.
     Assumes df is already cleaned and contains log_ret_1d plus features.
     """
-    # We walk each ticker once: slice fixed lookback windows and take the horizon-ahead return as target.
+    # We walk each ticker once: slice fixed lookback windows and take the precomputed target as label.
     X_list, y_list, dates, tickers = [], [], [], []
     for t, g in df.groupby("ticker"):
         g = g.sort_values("date").reset_index(drop=True)
         if len(g) <= lookback:
             continue
         x_arr = g[feat_cols].values.astype("float32")
-        y_arr = g["log_ret_1d"].shift(-horizon).values.astype("float32")
-        for pos in range(lookback, len(g) - horizon):
+        y_arr = g[target_col].values.astype("float32")
+        for pos in range(lookback, len(g)):
             X_list.append(x_arr[pos - lookback:pos])
             y_list.append(y_arr[pos])
             dates.append(pd.to_datetime(g.loc[pos, "date"]))
@@ -77,7 +78,7 @@ def _build_sequences(df, feat_cols, lookback, horizon):
     return X, y, dates, tickers
 
 
-def _prepare_cached_sequences(config, df, feat_cols, split_masks):
+def _prepare_cached_sequences(config, df, feat_cols, split_masks, target_col):
     """
     Build or load cached train/val/test tensors for the LSTM.
     Returns dict with {split: {X, y, dates, tickers}}.
@@ -88,7 +89,6 @@ def _prepare_cached_sequences(config, df, feat_cols, split_masks):
             "data": config["data"],
             "training": config["training"],
             "lookback": config["data"]["lookback_window"],
-            "target_horizon": config["data"].get("target_horizon"),
         },
         dataset_version="lstm_sequences",
         extra_files=[config["data"]["price_file"]],
@@ -102,12 +102,11 @@ def _prepare_cached_sequences(config, df, feat_cols, split_masks):
             return cached
 
     lookback = config["data"]["lookback_window"]
-    horizon = config["data"]["target_horizon"]
 
     # Build sequences once on the full dataframe, then assign sequences
     # to train/val/test based on the sequence prediction date. This mirrors
     # a realistic pipeline where each sequence uses full available history.
-    X_all, y_all, dates_all, tickers_all = _build_sequences(df, feat_cols, lookback, horizon)
+    X_all, y_all, dates_all, tickers_all = _build_sequences(df, feat_cols, lookback, target_col=target_col)
 
     dates_ser = pd.to_datetime(pd.Series(dates_all))
     val_start = pd.to_datetime(config["training"]["val_start"])
@@ -187,7 +186,8 @@ def train_lstm(config):
             json.dump(feat_cols, f)
         print(f"[lstm] computed features and cached to {cache_path_feat}")
 
-    df = df.dropna(subset=list(feat_cols) + ["log_ret_1d"]).reset_index(drop=True)
+    df, target_col = build_target(df, config, target_col="target")
+    df = df.dropna(subset=list(feat_cols) + [target_col]).reset_index(drop=True)
     df["date"] = pd.to_datetime(df["date"])
 
     val_start = pd.to_datetime(config["training"]["val_start"])
@@ -197,7 +197,7 @@ def train_lstm(config):
     val_mask = (df["date"] >= val_start) & (df["date"] < test_start)
     test_mask = df["date"] >= test_start
 
-    splits = _prepare_cached_sequences(config, df, feat_cols, (train_mask, val_mask, test_mask))
+    splits = _prepare_cached_sequences(config, df, feat_cols, (train_mask, val_mask, test_mask), target_col)
 
     # 2. Hyperparameter choice (unchanged)
     tune_cfg = config.get("tuning", {"enabled": False})

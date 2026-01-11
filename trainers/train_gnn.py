@@ -36,13 +36,13 @@ from utils.plot import (
 from utils.cache import cache_load, cache_save, cache_key, cache_path
 from utils.device import get_device, default_num_workers
 from utils.sanity import check_tensor
+from utils.targets import build_target
 
 
 def _build_snapshots_and_targets(config):
     price_file = config["data"]["price_file"]
     start = config["data"]["start_date"]
     end = config["data"]["end_date"]
-    horizon = config["data"]["target_horizon"]
     corr_window = config["data"]["corr_window"]
     corr_thr = config["data"]["corr_threshold"]
 
@@ -75,8 +75,9 @@ def _build_snapshots_and_targets(config):
     if "log_ret_1d" not in df.columns:
         raise ValueError("Expected column 'log_ret_1d' in feature dataframe")
 
+    df, target_col = build_target(df, config, target_col="target")
     feature_cols = list(feat_cols) + ["log_ret_1d"]
-    df = df.dropna(subset=feature_cols).reset_index(drop=True)
+    df = df.dropna(subset=feature_cols + [target_col]).reset_index(drop=True)
 
     universe_path = Path("data/processed/universe.csv")
     if not universe_path.exists():
@@ -86,9 +87,6 @@ def _build_snapshots_and_targets(config):
     universe_list = sorted(universe_df["ticker"].unique().tolist())
     sector_map = dict(zip(universe_df["ticker"], universe_df.get("sector", pd.Series(index=universe_df.index))))
     industry_map = dict(zip(universe_df["ticker"], universe_df.get("industry", pd.Series(index=universe_df.index))))
-
-    df["ret_target"] = df.groupby("ticker")["log_ret_1d"].shift(-horizon)
-    df = df.dropna(subset=["ret_target"]).reset_index(drop=True)
 
     ret_pivot = (
         df.pivot(index="date", columns="ticker", values="log_ret_1d")
@@ -144,7 +142,7 @@ def _build_snapshots_and_targets(config):
             if t in universe_today.index:
                 row = universe_today.loc[t]
                 feat_vec = row[feat_cols].values.astype(float)
-                y_ret = float(row["ret_target"])
+                y_ret = float(row[target_col])
                 valid_mask.append(True)
             else:
                 feat_vec = np.zeros(len(feat_cols), dtype=float)
