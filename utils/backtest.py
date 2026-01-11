@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from .metrics import sharpe_ratio, sortino_ratio
+from .metrics import portfolio_metrics
 
 def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
     """
@@ -30,15 +30,11 @@ def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
     # Portfolio equity is mean of cumulative wealth paths.
     cum_wealth = (1.0 + simple_ret).cumprod(axis=0)  # shape [T, N]
     equity = cum_wealth.mean(axis=1)
-    port_ret = pd.Series(equity, index=ret_df.index).pct_change().fillna(0.0).values
+    port_ret = pd.Series(equity, index=ret_df.index).pct_change().dropna().values
 
     eq_series = pd.Series(equity, index=ret_df.index)
 
-    stats = {
-        "final_value": float(eq_series.iloc[-1]),
-        "sharpe": sharpe_ratio(port_ret, risk_free_rate),
-        "sortino": sortino_ratio(port_ret, risk_free_rate),
-    }
+    stats = portfolio_metrics(eq_series, port_ret, risk_free_rate)
 
     return eq_series, port_ret, stats
 
@@ -123,12 +119,8 @@ def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate
         index=[d for d, _ in equity_curve],
     )
 
-    stats = {
-        "final_value": equity,
-        "sharpe": sharpe_ratio(daily_returns, risk_free_rate),
-        "sortino": sortino_ratio(daily_returns, risk_free_rate),
-        "avg_turnover": float(np.mean(daily_turnover)) if daily_turnover else 0.0,
-    }
+    stats = portfolio_metrics(eq_series, daily_returns, risk_free_rate)
+    stats["avg_turnover"] = float(np.mean(daily_turnover)) if daily_turnover else 0.0
 
     return eq_series, daily_returns, stats
 
@@ -222,11 +214,7 @@ def backtest_long_short(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rat
         index=[d for d, _ in equity_curve],
     )
 
-    stats = {
-        "final_value": equity,
-        "sharpe": sharpe_ratio(daily_returns, risk_free_rate),
-        "sortino": sortino_ratio(daily_returns, risk_free_rate),
-        "avg_turnover": turnover / len(dates),
-    }
+    stats = portfolio_metrics(eq_series, daily_returns, risk_free_rate)
+    stats["avg_turnover"] = turnover / len(dates) if dates else 0.0
 
     return eq_series, daily_returns, stats
