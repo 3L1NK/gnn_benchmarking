@@ -39,6 +39,7 @@ from utils.sanity import check_tensor
 from utils.targets import build_target
 from utils.preprocessing import scale_features
 from utils.splits import split_time
+from utils.results import build_experiment_result, save_experiment_result, edge_type_from_graph_cfg
 
 
 def _build_snapshots_and_targets(config):
@@ -488,6 +489,15 @@ def train_gnn(config):
         cache_save(cache_file, {"snapshots": snapshots, "feat_cols": feat_cols, "dates": dates, "graph_directed": graph_directed, "make_undirected": make_undirected})
         print(f"[gnn] saved snapshots to cache {cache_file}")
 
+    graph_window = ""
+    try:
+        starts = [g.window_start for g in snapshots if hasattr(g, "window_start")]
+        ends = [g.window_end for g in snapshots if hasattr(g, "window_end")]
+        if starts and ends:
+            graph_window = f"{pd.to_datetime(min(starts)).date()}..{pd.to_datetime(max(ends)).date()}"
+    except Exception:
+        graph_window = ""
+
     # Mandatory logging for defensibility: edge types enabled and snapshot stats
     graph_cfg_print = config.get("graph", {})
     use_corr = bool(graph_cfg_print.get("use_corr", False))
@@ -677,6 +687,7 @@ def train_gnn(config):
     tgt_mean_t = torch.tensor(tgt_mean, device=device)
     tgt_std_t = torch.tensor(tgt_std, device=device)
 
+    train_start = time.time()
     for epoch in range(max_epochs):
         model.train()
         train_losses = []
@@ -724,6 +735,7 @@ def train_gnn(config):
             if bad_epochs >= patience:
                 print("Early stopping")
                 break
+    train_seconds = time.time() - train_start
 
     if not model_path.exists():
         raise RuntimeError(f"No checkpoint saved to '{model_path}'. Validation never produced a usable batch.")
@@ -732,6 +744,7 @@ def train_gnn(config):
     model.eval()
 
     rows = []
+    infer_start = time.time()
     with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
         for batch in test_loader:
             batch = batch.to(device, non_blocking=True)
@@ -769,6 +782,7 @@ def train_gnn(config):
             # log stats to diagnose collapse
             if len(pred) > 0:
                 print(f"[{config['model']['type'].upper()}] test day {d.date()} pred mean {float(np.mean(pred)):.6f} std {float(np.std(pred)):.6f}")
+    inference_seconds = time.time() - infer_start
 
     pred_df = pd.DataFrame(rows)
     pred_df.to_csv(out_dir / f"{config['model']['type']}_predictions.csv", index=False)
@@ -880,6 +894,22 @@ def train_gnn(config):
     summary_path = out_dir / f"{run_tag}_summary.json"
     with summary_path.open("w") as f:
         json.dump(summary, f, indent=2)
+
+    results_path = Path(config.get("evaluation", {}).get("results_path", "results/results.jsonl"))
+    result = build_experiment_result(
+        config,
+        model_name=model_label,
+        model_family=config["model"]["family"],
+        edge_type=edge_type_from_graph_cfg(graph_cfg_print),
+        directed=graph_directed,
+        graph_window=graph_window,
+        pred_df=pred_df,
+        daily_metrics=daily_metrics,
+        stats=stats,
+        train_seconds=train_seconds,
+        inference_seconds=inference_seconds,
+    )
+    save_experiment_result(result, results_path)
 
     # Rolling metrics
     rolling_window = int(config.get("evaluation", {}).get("rolling_window", 63))

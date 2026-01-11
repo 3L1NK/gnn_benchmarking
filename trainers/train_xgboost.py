@@ -1,6 +1,7 @@
 # trainers/train_xgboost.py
 from pathlib import Path
 import json
+import time
 
 import numpy as np
 import pandas as pd
@@ -22,6 +23,7 @@ from utils.baseline import get_global_buy_and_hold
 from utils.targets import build_target
 from utils.preprocessing import scale_features
 from utils.splits import split_time
+from utils.results import build_experiment_result, save_experiment_result
 from xgboost import XGBRegressor
 from itertools import product
 from sklearn.metrics import root_mean_squared_error
@@ -167,7 +169,7 @@ class XGBoostTrainer:
 
         return result
 
-    def _evaluate_and_backtest(self, pred_df, name: str):
+    def _evaluate_and_backtest(self, pred_df, name: str, result_meta=None):
         daily_metrics = []
         for d, g in pred_df.groupby("date"):
             ic = rank_ic(g["pred"], g["realized_ret"])
@@ -261,6 +263,23 @@ class XGBoostTrainer:
         summary_path = self.out_dir / f"{name}_summary.json"
         with summary_path.open("w") as f:
             json.dump(summary, f, indent=2)
+
+        result_meta = result_meta or {}
+        results_path = Path(self.config.get("evaluation", {}).get("results_path", "results/results.jsonl"))
+        result = build_experiment_result(
+            self.config,
+            model_name=name,
+            model_family=self.config["model"]["family"],
+            edge_type=result_meta.get("edge_type", "none"),
+            directed=bool(result_meta.get("directed", False)),
+            graph_window=result_meta.get("graph_window", ""),
+            pred_df=pred_df,
+            daily_metrics=daily_metrics,
+            stats=stats,
+            train_seconds=float(result_meta.get("train_seconds", 0.0)),
+            inference_seconds=float(result_meta.get("inference_seconds", 0.0)),
+        )
+        save_experiment_result(result, results_path)
 
         rolling_window = int(self.config.get("evaluation", {}).get("rolling_window", 63))
         rolling = pd.DataFrame({"date": daily_metrics["date"]}).copy()
@@ -427,6 +446,7 @@ class XGBoostTrainer:
         # -----------------------
         # 5. Train final model
         # -----------------------
+        train_start = time.time()
         X_train_full = np.concatenate([X_train, X_val])
         y_train_full = np.concatenate([y_train, y_val])
 
@@ -450,8 +470,11 @@ class XGBoostTrainer:
                 eval_set=[(X_val, y_val)],
                 verbose=50,
             )
+        train_seconds = time.time() - train_start
 
+        infer_start = time.time()
         preds_test = model.predict(X_test)
+        inference_seconds = time.time() - infer_start
 
         # -----------------------
         # 6. Output + backtest
@@ -461,7 +484,17 @@ class XGBoostTrainer:
         df_test["realized_ret"] = y_test
         df_test.to_csv(self.out_dir / "xgb_raw_predictions.csv", index=False)
 
-        self._evaluate_and_backtest(df_test, name="xgb_raw")
+        self._evaluate_and_backtest(
+            df_test,
+            name="xgb_raw",
+            result_meta={
+                "edge_type": "none",
+                "directed": False,
+                "graph_window": "",
+                "train_seconds": train_seconds,
+                "inference_seconds": inference_seconds,
+            },
+        )
 
 
 
@@ -479,6 +512,8 @@ class XGBoostTrainer:
 
         set_seed(42)
         debug = bool(self.config.get("debug", {}).get("leakage", False))
+
+        train_start = time.time()
 
         val_start = pd.to_datetime(self.config["training"]["val_start"])
         train_mask, val_mask, test_mask = _time_masks(
@@ -516,6 +551,9 @@ class XGBoostTrainer:
             print(f"[xgb_node2vec] graph window={train_dates.min().date()}..{train_dates.max().date()} corr_window={corr_window}")
 
         graph_mode = self.config["model"].get("graph_mode", "correlation")  # "correlation" or "combined"
+        graph_window = ""
+        if not train_df.empty:
+            graph_window = f"{pd.to_datetime(train_df['date']).min().date()}..{pd.to_datetime(train_df['date']).max().date()}"
 
         # build weighted static graph combining correlation + optional sector/industry
         tickers_train = sorted(train_df["ticker"].unique())
@@ -830,10 +868,13 @@ class XGBoostTrainer:
             X_train_full = np.concatenate([X_train, X_val])
             y_train_full = np.concatenate([y_train, y_val])
             model.fit(X_train_full, y_train_full, group=train_group_full, eval_set=[(X_val, y_val)], eval_group=[val_group], verbose=50)
-            preds_test = model.predict(X_test)
         else:
             model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
-            preds_test = model.predict(X_test)
+        train_seconds = time.time() - train_start
+
+        infer_start = time.time()
+        preds_test = model.predict(X_test)
+        inference_seconds = time.time() - infer_start
 
         # Feature importance diagnostics: show whether embeddings contribute.
         try:
@@ -877,6 +918,13 @@ class XGBoostTrainer:
         self._evaluate_and_backtest(
             tab_test,
             name="xgb_node2vec",
+            result_meta={
+                "edge_type": f"node2vec_{graph_mode}",
+                "directed": False,
+                "graph_window": graph_window,
+                "train_seconds": train_seconds,
+                "inference_seconds": inference_seconds,
+            },
         )
 
     def train_graphlasso_linear(self):
@@ -886,6 +934,7 @@ class XGBoostTrainer:
         debug = bool(self.config.get("debug", {}).get("leakage", False))
 
         val_start = self.config["training"]["val_start"]
+        graph_window = f"{self.config['data']['start_date']}..{val_start}"
         # `graphical_lasso_precision` treats end_date as exclusive, so pass the
         # validation start directly and let the function exclude it.
         _, _, _, adj = graphical_lasso_precision(
@@ -925,10 +974,14 @@ class XGBoostTrainer:
         X_val, y_val = X[val_mask], y[val_mask]
         X_test, y_test = X[test_mask], y[test_mask]
 
+        train_start = time.time()
         model = Ridge(alpha=1.0)
         model.fit(X_train, y_train)
+        train_seconds = time.time() - train_start
 
+        infer_start = time.time()
         preds_test = model.predict(X_test)
+        inference_seconds = time.time() - infer_start
 
         df_test = df_smooth.loc[test_mask, ["date", "ticker"]].copy()
         df_test["pred"] = preds_test
@@ -938,6 +991,13 @@ class XGBoostTrainer:
         self._evaluate_and_backtest(
             df_test,
             name="graphlasso_linear",
+            result_meta={
+                "edge_type": "graphlasso",
+                "directed": False,
+                "graph_window": graph_window,
+                "train_seconds": train_seconds,
+                "inference_seconds": inference_seconds,
+            },
         )
 
     def train_graphlasso_xgb(self):
@@ -958,6 +1018,7 @@ class XGBoostTrainer:
         returns_df = self.df[["date", "ticker", "log_ret_1d"]].copy()
 
         val_start = self.config["training"]["val_start"]
+        graph_window = f"{self.config['data']['start_date']}..{val_start}"
         # `graphical_lasso_precision` treats end_date as exclusive, so pass the
         # validation start directly and let the function exclude it.
         _, _, _, adj = graphical_lasso_precision(
@@ -997,6 +1058,7 @@ class XGBoostTrainer:
         X_val, y_val = X[val_mask], y[val_mask]
         X_test, y_test = X[test_mask], y[test_mask]
 
+        train_start = time.time()
         model = XGBRegressor(
             n_estimators=600,
             learning_rate=0.05,
@@ -1009,8 +1071,11 @@ class XGBoostTrainer:
         )
 
         model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
+        train_seconds = time.time() - train_start
 
+        infer_start = time.time()
         preds_test = model.predict(X_test)
+        inference_seconds = time.time() - infer_start
 
         df_test = df_smooth.loc[test_mask, ["date", "ticker"]].copy()
         df_test["pred"] = preds_test
@@ -1020,6 +1085,13 @@ class XGBoostTrainer:
         self._evaluate_and_backtest(
             df_test,
             name="graphlasso_xgb",
+            result_meta={
+                "edge_type": "graphlasso",
+                "directed": False,
+                "graph_window": graph_window,
+                "train_seconds": train_seconds,
+                "inference_seconds": inference_seconds,
+            },
         )
 
     def train_granger_xgb(self):
@@ -1038,6 +1110,10 @@ class XGBoostTrainer:
         p_threshold = float(granger_cfg.get("p_threshold", 0.05))
 
         edges = granger_edges(returns_df.loc[mask], max_lag=max_lag, p_threshold=p_threshold)
+
+        graph_window = ""
+        if not returns_df.loc[mask].empty:
+            graph_window = f"{pd.to_datetime(returns_df.loc[mask, 'date']).min().date()}..{pd.to_datetime(returns_df.loc[mask, 'date']).max().date()}"
 
         if debug and not returns_df.loc[mask].empty:
             train_dates = pd.to_datetime(returns_df.loc[mask, "date"])
@@ -1122,6 +1198,7 @@ class XGBoostTrainer:
         X_val, y_val = X[val_mask], y[val_mask]
         X_test, y_test = X[test_mask], y[test_mask]
 
+        train_start = time.time()
         model = XGBRegressor(
             n_estimators=600,
             learning_rate=0.05,
@@ -1134,8 +1211,11 @@ class XGBoostTrainer:
         )
 
         model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
+        train_seconds = time.time() - train_start
 
+        infer_start = time.time()
         preds_test = model.predict(X_test)
+        inference_seconds = time.time() - infer_start
 
         df_test = df_smooth.loc[test_mask, ["date", "ticker"]].copy()
         df_test["pred"] = preds_test
@@ -1145,6 +1225,13 @@ class XGBoostTrainer:
         self._evaluate_and_backtest(
             df_test,
             name="granger_xgb",
+            result_meta={
+                "edge_type": "granger_sym",
+                "directed": False,
+                "graph_window": graph_window,
+                "train_seconds": train_seconds,
+                "inference_seconds": inference_seconds,
+            },
         )
 
     

@@ -39,6 +39,7 @@ from utils.sanity import check_tensor
 from utils.targets import build_target
 from utils.preprocessing import scale_features
 from utils.splits import split_time
+from utils.results import build_experiment_result, save_experiment_result
 
 
 class TensorLSTMDataset(Dataset):
@@ -348,6 +349,7 @@ def train_lstm(config):
 
     max_epochs = config["training"]["max_epochs"]
 
+    train_start = time.time()
     for epoch in range(max_epochs):
         t0 = time.time()
         model.train()
@@ -394,6 +396,7 @@ def train_lstm(config):
             if bad_epochs >= patience:
                 print("Early stopping")
                 break
+    train_seconds = time.time() - train_start
 
     # 4. Test predictions
     model.load_state_dict(torch.load(model_path, map_location=device))
@@ -402,6 +405,7 @@ def train_lstm(config):
     rows = []
     all_preds = []
     all_real = []
+    infer_start = time.time()
     with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
         for xb, yb in test_loader:
             xb = xb.to(device, non_blocking=True)
@@ -409,6 +413,7 @@ def train_lstm(config):
             y_np = yb.numpy()
             all_preds.extend(preds)
             all_real.extend(y_np)
+    inference_seconds = time.time() - infer_start
 
     dates = splits["test"]["dates"]
     tickers = splits["test"]["tickers"]
@@ -538,6 +543,22 @@ def train_lstm(config):
     summary_path = out_dir / f"{run_tag}_summary.json"
     with summary_path.open("w") as f:
         json.dump(summary, f, indent=2)
+
+    results_path = Path(config.get("evaluation", {}).get("results_path", "results/results.jsonl"))
+    result = build_experiment_result(
+        config,
+        model_name=config["model"]["type"],
+        model_family=config["model"]["family"],
+        edge_type="none",
+        directed=False,
+        graph_window="",
+        pred_df=pred_df,
+        daily_metrics=daily_metrics,
+        stats=stats,
+        train_seconds=train_seconds,
+        inference_seconds=inference_seconds,
+    )
+    save_experiment_result(result, results_path)
 
     rolling_window = int(config.get("evaluation", {}).get("rolling_window", 63))
     rolling = pd.DataFrame({"date": daily_metrics["date"]}).copy()
