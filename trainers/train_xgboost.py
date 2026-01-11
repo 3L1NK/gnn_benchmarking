@@ -20,6 +20,8 @@ from utils.seeds import set_seed
 from utils.cache import cache_load, cache_save, cache_key, cache_path
 from utils.baseline import get_global_buy_and_hold
 from utils.targets import build_target
+from utils.preprocessing import scale_features
+from utils.splits import split_time
 from xgboost import XGBRegressor
 from itertools import product
 from sklearn.metrics import root_mean_squared_error
@@ -54,23 +56,9 @@ def _build_feature_panel(config):
 
     return df, feat_cols
 
-def _time_masks(dates, val_start, test_start):
-    """
-    Docstring for _time_masks
-    
-    it transforms dates into pd.Timestamp and creates boolean masks for train, validation, and test sets based on the provided start dates.
-    
-    :param dates: dates from the price.parquet DataFrame
-    :param val_start: when the validation period starts
-    :param test_start: when the test period starts
-    :return: train_mask, val_mask, test_mask
-    """
-    dates = pd.to_datetime(dates)
-    val_start = pd.to_datetime(val_start)
-    test_start = pd.to_datetime(test_start)
-    train_mask = dates < val_start
-    val_mask = (dates >= val_start) & (dates < test_start)
-    test_mask = dates >= test_start
+def _time_masks(dates, val_start, test_start, *, label="split", debug=False):
+    cfg = {"training": {"val_start": val_start, "test_start": test_start}}
+    train_mask, val_mask, test_mask, _ = split_time(dates, cfg, label=label, debug=debug)
     return train_mask, val_mask, test_mask
 
 def _add_graph_smooth_features(df, feat_cols, adj_dict, alpha=0.5):
@@ -286,6 +274,7 @@ class XGBoostTrainer:
     
     def train_xgb_raw(self):
         set_seed(42)
+        debug = bool(self.config.get("debug", {}).get("leakage", False))
 
         # -----------------------
         # 1. Split data
@@ -294,37 +283,25 @@ class XGBoostTrainer:
             self.df["date"],
             self.config["training"]["val_start"],
             self.config["training"]["test_start"],
+            label="xgb_raw",
+            debug=debug,
         )
 
-        # Optional cross-sectional (per-date) z-score normalization for raw features.
         cs_cfg = self.config.get("xgb", {})
-        cs_zscore = bool(cs_cfg.get("cross_sectional_zscore", False))
+        if cs_cfg.get("cross_sectional_zscore", False):
+            print("[xgb_raw] Warning: cross_sectional_zscore ignored to avoid leakage; using train-fit scaler.")
 
-        raw_mat = self.df[self.feat_cols].to_numpy(dtype=float, copy=True)
-        dates_arr = self.df["date"].values
-
-        if cs_zscore:
-            norm_raw = np.zeros_like(raw_mat, dtype=float)
-            uniq_dates, inv_idx = np.unique(dates_arr, return_inverse=True)
-            for i, d in enumerate(uniq_dates):
-                idxs = np.where(inv_idx == i)[0]
-                block = raw_mat[idxs].astype(float, copy=True)
-                col_mean = np.nanmean(block, axis=0)
-                col_std = np.nanstd(block, axis=0)
-                col_std[col_std == 0] = 1.0
-                inds_nan = np.isnan(block)
-                if inds_nan.any():
-                    block[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
-                z = (block - col_mean) / (col_std + 1e-8)
-                norm_raw[idxs] = z
-            X = norm_raw
-        else:
-            # minimal imputation to avoid NaNs: fill with global column mean
-            col_mean = np.nanmean(raw_mat, axis=0)
-            inds_nan = np.isnan(raw_mat)
-            if inds_nan.any():
-                raw_mat[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
-            X = raw_mat
+        pre_cfg = self.config.get("preprocess", {})
+        do_scale = bool(pre_cfg.get("scale_features", True))
+        df_scaled, _ = scale_features(
+            self.df,
+            self.feat_cols,
+            train_mask,
+            label="xgb_raw",
+            debug=debug,
+            scale=do_scale,
+        )
+        X = df_scaled[self.feat_cols].to_numpy(dtype=float, copy=True)
 
         y = self.df["target"].values.astype(float)
 
@@ -334,7 +311,7 @@ class XGBoostTrainer:
                 "params": self.config["model"],
                 "data": self.config["data"],
                 "training": self.config["training"],
-                "cross_sectional_zscore": cs_zscore,
+                "preprocess": self.config.get("preprocess", {"scale_features": True, "scaler": "standard"}),
             },
             dataset_version="xgb_raw",
             extra_files=[self.config["data"]["price_file"]],
@@ -501,9 +478,17 @@ class XGBoostTrainer:
         from torch_geometric.nn import Node2Vec
 
         set_seed(42)
+        debug = bool(self.config.get("debug", {}).get("leakage", False))
 
         val_start = pd.to_datetime(self.config["training"]["val_start"])
-        train_df = self.df[self.df["date"] < val_start]
+        train_mask, val_mask, test_mask = _time_masks(
+            self.df["date"],
+            self.config["training"]["val_start"],
+            self.config["training"]["test_start"],
+            label="xgb_node2vec",
+            debug=debug,
+        )
+        train_df = self.df[train_mask]
 
         # universe metadata for sector / industry priors
         universe_path = Path("data/processed/universe.csv")
@@ -525,6 +510,10 @@ class XGBoostTrainer:
             corr_window,
             corr_thr,
         )
+
+        if debug and not train_df.empty:
+            train_dates = pd.to_datetime(train_df["date"])
+            print(f"[xgb_node2vec] graph window={train_dates.min().date()}..{train_dates.max().date()} corr_window={corr_window}")
 
         graph_mode = self.config["model"].get("graph_mode", "correlation")  # "correlation" or "combined"
 
@@ -653,13 +642,27 @@ class XGBoostTrainer:
         emb_std = emb_matrix.std(axis=0, keepdims=True) + 1e-8
         emb_matrix = emb_scale * (emb_matrix - emb_mean) / emb_std
 
-        # Build rows with raw features and embeddings separately so we can
-        # apply per-date cross-sectional normalization to raw features.
+        cs_cfg = self.config.get("xgb", {})
+        if cs_cfg.get("cross_sectional_zscore", False):
+            print("[xgb_node2vec] Warning: cross_sectional_zscore ignored to avoid leakage; using train-fit scaler.")
+
+        pre_cfg = self.config.get("preprocess", {})
+        do_scale = bool(pre_cfg.get("scale_features", True))
+        df_scaled, _ = scale_features(
+            self.df,
+            self.feat_cols,
+            train_mask,
+            label="xgb_node2vec",
+            debug=debug,
+            scale=do_scale,
+        )
+        scaled_feats = df_scaled[self.feat_cols].to_numpy(dtype=float, copy=True)
+
+        # Build rows with scaled raw features and embeddings.
         rows = []
-        for _, row in self.df.iterrows():
+        for idx, row in self.df.iterrows():
             t = row["ticker"]
-            # gather raw features (keep NaNs for now so we can handle them per-date)
-            f = row.reindex(self.feat_cols).to_numpy(dtype=float, copy=False)
+            f = scaled_feats[idx]
             if t in ticker_to_idx:
                 vec = emb_matrix[ticker_to_idx[t]]
             else:
@@ -676,35 +679,9 @@ class XGBoostTrainer:
 
         tab = pd.DataFrame(rows)
 
-        # Per-date cross-sectional z-score normalization for raw features (optional)
-        cs_cfg = self.config.get("xgb", {})
-        cs_zscore = bool(cs_cfg.get("cross_sectional_zscore", False))
+        norm_raw = np.stack(tab["raw_feat"].values)
 
-        raw_mat = np.stack(tab["raw_feat"].values)
-        dates = tab["date"].values
-        if cs_zscore:
-            norm_raw = np.zeros_like(raw_mat, dtype=float)
-            uniq_dates, inv_idx = np.unique(dates, return_inverse=True)
-            for i, d in enumerate(uniq_dates):
-                idxs = np.where(inv_idx == i)[0]
-                block = raw_mat[idxs].astype(float, copy=True)
-                col_mean = np.nanmean(block, axis=0)
-                col_std = np.nanstd(block, axis=0)
-                col_std[col_std == 0] = 1.0
-                inds_nan = np.isnan(block)
-                if inds_nan.any():
-                    block[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
-                z = (block - col_mean) / (col_std + 1e-8)
-                norm_raw[idxs] = z
-        else:
-            # minimal imputation to avoid NaNs when not z-scoring: fill with global col mean
-            norm_raw = raw_mat.astype(float, copy=True)
-            col_mean = np.nanmean(norm_raw, axis=0)
-            inds_nan = np.isnan(norm_raw)
-            if inds_nan.any():
-                norm_raw[inds_nan] = np.take(col_mean, np.where(inds_nan)[1])
-
-        # combine normalized raw features and embeddings
+        # combine scaled raw features and embeddings
         emb_stack = np.stack(tab["emb"].values)
 
         # Debug / diagnostics: report embedding coverage and relative scale
@@ -737,13 +714,6 @@ class XGBoostTrainer:
             print(f"[xgb_node2vec] Warning: {len(missing_global)} universe tickers have no embedding mapping (ticker_to_idx size={len(ticker_to_idx)}, universe size={len(all_tickers)})")
             print(f"[xgb_node2vec] Sample missing tickers: {missing_global[:10]}")
 
-        # time masks are needed even when loading cached splits
-        train_mask, val_mask, test_mask = _time_masks(
-            tab["date"],
-            self.config["training"]["val_start"],
-            self.config["training"]["test_start"],
-        )
-
         try:
             test_counts = tab.loc[test_mask].groupby("date").size()
             if not test_counts.empty:
@@ -757,20 +727,13 @@ class XGBoostTrainer:
         except Exception:
             pass
 
-        # time masks are needed even when loading cached splits
-        train_mask, val_mask, test_mask = _time_masks(
-            tab["date"],
-            self.config["training"]["val_start"],
-            self.config["training"]["test_start"],
-        )
-
         cache_id_feats = cache_key(
             {
                 "model": "xgb_node2vec_features",
                 "graph_mode": graph_mode,
                 "data": self.config["data"],
                 "training": self.config["training"],
-                "cross_sectional_zscore": cs_zscore,
+                "preprocess": self.config.get("preprocess", {"scale_features": True, "scaler": "standard"}),
                 "emb_dim": self.config["model"].get("embedding_dim", 8),
             },
             dataset_version="xgb_node2vec_features",
@@ -920,6 +883,7 @@ class XGBoostTrainer:
         from sklearn.linear_model import Ridge
 
         set_seed(42)
+        debug = bool(self.config.get("debug", {}).get("leakage", False))
 
         val_start = self.config["training"]["val_start"]
         # `graphical_lasso_precision` treats end_date as exclusive, so pass the
@@ -931,16 +895,31 @@ class XGBoostTrainer:
             alpha=self.config.get("graphlasso_alpha", 0.01),
         )
 
-        df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=0.5)
+        if debug:
+            print(f"[graphlasso_linear] graph window={self.config['data']['start_date']}..{val_start} (exclusive end)")
 
-        X = df_smooth[self.feat_cols + smooth_cols].values.astype(float)
-        y = df_smooth["target"].values.astype(float)
+        df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=0.5)
 
         train_mask, val_mask, test_mask = _time_masks(
             df_smooth["date"],
             self.config["training"]["val_start"],
             self.config["training"]["test_start"],
+            label="graphlasso_linear",
+            debug=debug,
         )
+
+        pre_cfg = self.config.get("preprocess", {})
+        do_scale = bool(pre_cfg.get("scale_features", True))
+        df_scaled, _ = scale_features(
+            df_smooth,
+            self.feat_cols + smooth_cols,
+            train_mask,
+            label="graphlasso_linear",
+            debug=debug,
+            scale=do_scale,
+        )
+        X = df_scaled[self.feat_cols + smooth_cols].values.astype(float)
+        y = df_scaled["target"].values.astype(float)
 
         X_train, y_train = X[train_mask], y[train_mask]
         X_val, y_val = X[val_mask], y[val_mask]
@@ -974,6 +953,7 @@ class XGBoostTrainer:
         """
         from xgboost import XGBRegressor
         set_seed(42)
+        debug = bool(self.config.get("debug", {}).get("leakage", False))
 
         returns_df = self.df[["date", "ticker", "log_ret_1d"]].copy()
 
@@ -987,16 +967,31 @@ class XGBoostTrainer:
             alpha=self.config.get("graphlasso_alpha", 0.01),
         )
 
-        df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=0.5)
+        if debug:
+            print(f"[graphlasso_xgb] graph window={self.config['data']['start_date']}..{val_start} (exclusive end)")
 
-        X = df_smooth[self.feat_cols + smooth_cols].values.astype(float)
-        y = df_smooth["target"].values.astype(float)
+        df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=0.5)
 
         train_mask, val_mask, test_mask = _time_masks(
             df_smooth["date"],
             self.config["training"]["val_start"],
             self.config["training"]["test_start"],
+            label="graphlasso_xgb",
+            debug=debug,
         )
+
+        pre_cfg = self.config.get("preprocess", {})
+        do_scale = bool(pre_cfg.get("scale_features", True))
+        df_scaled, _ = scale_features(
+            df_smooth,
+            self.feat_cols + smooth_cols,
+            train_mask,
+            label="graphlasso_xgb",
+            debug=debug,
+            scale=do_scale,
+        )
+        X = df_scaled[self.feat_cols + smooth_cols].values.astype(float)
+        y = df_scaled["target"].values.astype(float)
 
         X_train, y_train = X[train_mask], y[train_mask]
         X_val, y_val = X[val_mask], y[val_mask]
@@ -1030,11 +1025,12 @@ class XGBoostTrainer:
     def train_granger_xgb(self):
         from xgboost import XGBRegressor
         set_seed(42)
+        debug = bool(self.config.get("debug", {}).get("leakage", False))
 
         returns_df = self.df[["date", "ticker", "log_ret_1d"]].copy()
 
         val_start = self.config["training"]["val_start"]
-        mask = returns_df["date"] < pd.to_datetime(val_start)
+        mask, _, _, _ = split_time(returns_df["date"], self.config, label="granger_xgb_graph", debug=debug)
 
         # allow configuring Granger params from YAML
         granger_cfg = self.config.get("granger", {})
@@ -1042,6 +1038,10 @@ class XGBoostTrainer:
         p_threshold = float(granger_cfg.get("p_threshold", 0.05))
 
         edges = granger_edges(returns_df.loc[mask], max_lag=max_lag, p_threshold=p_threshold)
+
+        if debug and not returns_df.loc[mask].empty:
+            train_dates = pd.to_datetime(returns_df.loc[mask, "date"])
+            print(f"[granger_xgb] graph window={train_dates.min().date()}..{train_dates.max().date()}")
 
         # log top-k edges for quick sanity check
         if edges:
@@ -1097,14 +1097,26 @@ class XGBoostTrainer:
 
         df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=self.config.get("graph_smooth_alpha", 0.5))
 
-        X = df_smooth[self.feat_cols + smooth_cols].values
-        y = df_smooth["target"].values
-
         train_mask, val_mask, test_mask = _time_masks(
             df_smooth["date"],
             self.config["training"]["val_start"],
             self.config["training"]["test_start"],
+            label="granger_xgb",
+            debug=debug,
         )
+
+        pre_cfg = self.config.get("preprocess", {})
+        do_scale = bool(pre_cfg.get("scale_features", True))
+        df_scaled, _ = scale_features(
+            df_smooth,
+            self.feat_cols + smooth_cols,
+            train_mask,
+            label="granger_xgb",
+            debug=debug,
+            scale=do_scale,
+        )
+        X = df_scaled[self.feat_cols + smooth_cols].values
+        y = df_scaled["target"].values
 
         X_train, y_train = X[train_mask], y[train_mask]
         X_val, y_val = X[val_mask], y[val_mask]

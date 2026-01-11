@@ -37,6 +37,8 @@ from utils.cache import cache_load, cache_save, cache_key, cache_path
 from utils.device import get_device, default_num_workers
 from utils.sanity import check_tensor
 from utils.targets import build_target
+from utils.preprocessing import scale_features
+from utils.splits import split_time
 
 
 class TensorLSTMDataset(Dataset):
@@ -78,7 +80,7 @@ def _build_sequences(df, feat_cols, lookback, target_col):
     return X, y, dates, tickers
 
 
-def _prepare_cached_sequences(config, df, feat_cols, split_masks, target_col):
+def _prepare_cached_sequences(config, df, feat_cols, target_col, debug=False):
     """
     Build or load cached train/val/test tensors for the LSTM.
     Returns dict with {split: {X, y, dates, tickers}}.
@@ -89,6 +91,7 @@ def _prepare_cached_sequences(config, df, feat_cols, split_masks, target_col):
             "data": config["data"],
             "training": config["training"],
             "lookback": config["data"]["lookback_window"],
+            "preprocess": config.get("preprocess", {"scale_features": True, "scaler": "standard"}),
         },
         dataset_version="lstm_sequences",
         extra_files=[config["data"]["price_file"]],
@@ -108,17 +111,16 @@ def _prepare_cached_sequences(config, df, feat_cols, split_masks, target_col):
     # a realistic pipeline where each sequence uses full available history.
     X_all, y_all, dates_all, tickers_all = _build_sequences(df, feat_cols, lookback, target_col=target_col)
 
-    dates_ser = pd.to_datetime(pd.Series(dates_all))
-    val_start = pd.to_datetime(config["training"]["val_start"])
-    test_start = pd.to_datetime(config["training"]["test_start"])
-
-    seq_train_mask = dates_ser < val_start
-    seq_val_mask = (dates_ser >= val_start) & (dates_ser < test_start)
-    seq_test_mask = dates_ser >= test_start
+    seq_train_mask, seq_val_mask, seq_test_mask, _ = split_time(
+        dates_all,
+        config,
+        label="lstm_sequences",
+        debug=debug,
+    )
 
     splits = {}
     for name, mask in [("train", seq_train_mask), ("val", seq_val_mask), ("test", seq_test_mask)]:
-        idxs = mask[mask].index.values
+        idxs = np.where(mask)[0]
         if len(idxs) == 0:
             raise ValueError(f"[lstm] No sequences for split {name}; check date ranges and lookback/horizon.")
         X = X_all[idxs]
@@ -146,6 +148,7 @@ def train_lstm(config):
       5) Evaluate, backtest, and plot with rebased curves
     """
     set_seed(42)
+    debug = bool(config.get("debug", {}).get("leakage", False))
 
     device = get_device(config["training"]["device"])
     use_cuda = device.type == "cuda"
@@ -190,14 +193,12 @@ def train_lstm(config):
     df = df.dropna(subset=list(feat_cols) + [target_col]).reset_index(drop=True)
     df["date"] = pd.to_datetime(df["date"])
 
-    val_start = pd.to_datetime(config["training"]["val_start"])
-    test_start = pd.to_datetime(config["training"]["test_start"])
+    train_mask, _, _, _ = split_time(df["date"], config, label="lstm", debug=debug)
+    pre_cfg = config.get("preprocess", {})
+    do_scale = bool(pre_cfg.get("scale_features", True))
+    df_scaled, _ = scale_features(df, feat_cols, train_mask, label="lstm", debug=debug, scale=do_scale)
 
-    train_mask = df["date"] < val_start
-    val_mask = (df["date"] >= val_start) & (df["date"] < test_start)
-    test_mask = df["date"] >= test_start
-
-    splits = _prepare_cached_sequences(config, df, feat_cols, (train_mask, val_mask, test_mask), target_col)
+    splits = _prepare_cached_sequences(config, df_scaled, feat_cols, target_col, debug=debug)
 
     # 2. Hyperparameter choice (unchanged)
     tune_cfg = config.get("tuning", {"enabled": False})

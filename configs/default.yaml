@@ -11,6 +11,10 @@ data:
   corr_top_k: 10
   corr_min_periods: 30
 
+preprocess:
+  scale_features: true
+  scaler: "standard"
+
 graph_edges:
   use_correlation: true
   use_sector: true

@@ -40,7 +40,7 @@ def main():
         print('No snapshots; abort')
         return
 
-    train_snaps, val_snaps, test_snaps = _split_snapshots_by_date(snapshots, dates, cfg['training']['val_start'], cfg['training']['test_start'])
+    train_snaps, val_snaps, test_snaps = _split_snapshots_by_date(snapshots, dates, cfg, label="gnn_debug", debug=True)
     print(f'train {len(train_snaps)} val {len(val_snaps)} test {len(test_snaps)}')
     if not train_snaps:
         print('No train snaps; abort')

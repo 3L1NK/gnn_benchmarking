@@ -37,9 +37,12 @@ from utils.cache import cache_load, cache_save, cache_key, cache_path
 from utils.device import get_device, default_num_workers
 from utils.sanity import check_tensor
 from utils.targets import build_target
+from utils.preprocessing import scale_features
+from utils.splits import split_time
 
 
 def _build_snapshots_and_targets(config):
+    debug = bool(config.get("debug", {}).get("leakage", False))
     price_file = config["data"]["price_file"]
     start = config["data"]["start_date"]
     end = config["data"]["end_date"]
@@ -78,6 +81,13 @@ def _build_snapshots_and_targets(config):
     df, target_col = build_target(df, config, target_col="target")
     feature_cols = list(feat_cols) + ["log_ret_1d"]
     df = df.dropna(subset=feature_cols + [target_col]).reset_index(drop=True)
+    df["date"] = pd.to_datetime(df["date"])
+
+    df_raw = df.copy()
+    train_mask, _, _, _ = split_time(df["date"], config, label="gnn", debug=debug)
+    pre_cfg = config.get("preprocess", {})
+    do_scale = bool(pre_cfg.get("scale_features", True))
+    df, _ = scale_features(df, feat_cols, train_mask, label="gnn", debug=debug, scale=do_scale)
 
     universe_path = Path("data/processed/universe.csv")
     if not universe_path.exists():
@@ -89,12 +99,11 @@ def _build_snapshots_and_targets(config):
     industry_map = dict(zip(universe_df["ticker"], universe_df.get("industry", pd.Series(index=universe_df.index))))
 
     ret_pivot = (
-        df.pivot(index="date", columns="ticker", values="log_ret_1d")
+        df_raw.pivot(index="date", columns="ticker", values="log_ret_1d")
         .reindex(columns=universe_list)
         .sort_index()
     )
 
-    df["date"] = pd.to_datetime(df["date"])
     dates = sorted(df["date"].unique())
 
     # Precompute Granger edges from train-only data when requested.
@@ -105,9 +114,12 @@ def _build_snapshots_and_targets(config):
         val_start = pd.to_datetime(config["training"]["val_start"]) if "training" in config else None
         if val_start is None:
             raise ValueError("training.val_start must be set to compute granger edges from train-only data")
-        train_mask = df["date"] < val_start
+        train_mask, _, _, _ = split_time(df["date"], config, label="gnn_granger", debug=debug)
+        if debug and not df.loc[train_mask].empty:
+            train_dates = pd.to_datetime(df.loc[train_mask, "date"])
+            print(f"[gnn] granger window={train_dates.min().date()}..{train_dates.max().date()}")
         try:
-            gr_edges = granger_edges(df.loc[train_mask], max_lag=int(config.get("granger", {}).get("max_lag", 2)), p_threshold=float(config.get("granger", {}).get("p_threshold", 0.05)))
+            gr_edges = granger_edges(df_raw.loc[train_mask], max_lag=int(config.get("granger", {}).get("max_lag", 2)), p_threshold=float(config.get("granger", {}).get("p_threshold", 0.05)))
             # symmetrize and store as unordered pair -> weight
             for u, v, w in gr_edges:
                 if u == v:
@@ -132,6 +144,12 @@ def _build_snapshots_and_targets(config):
             continue
 
         window_ret = ret_pivot.iloc[idx - corr_window + 1 : idx + 1]
+        window_start = window_ret.index.min()
+        window_end = window_ret.index.max()
+        if debug:
+            print(f"[gnn] snapshot {d.date()} graph_window={window_start.date()}..{window_end.date()}")
+        if window_end > d:
+            raise ValueError(f"[gnn] Leakage detected: window_end {window_end} exceeds snapshot date {d}")
         universe_today = df[df["date"] == d].set_index("ticker")
 
         feat_for_date = {}
@@ -161,21 +179,7 @@ def _build_snapshots_and_targets(config):
         if not np.isfinite(x).all() or not np.isfinite(y_ret).all():
             continue
 
-        # standardize per day using valid nodes only
         valid_mask_np = np.array(valid_mask, dtype=bool)
-        x_std = x.copy()
-        for col in range(x_std.shape[1]):
-            vals = x_std[valid_mask_np, col]
-            if vals.size == 0:
-                x_std[:, col] = 0.0
-                continue
-            mean = vals.mean()
-            std = vals.std()
-            if std < 1e-8:
-                x_std[:, col] = 0.0
-            else:
-                x_std[:, col] = (x_std[:, col] - mean) / std
-        x = x_std
         if not np.any(np.abs(x[valid_mask_np]) > 1e-8):
             continue
 
@@ -347,6 +351,8 @@ def _build_snapshots_and_targets(config):
         g.valid_mask = valid_mask_tensor
         g.tickers = tickers_list
         g.date = d
+        g.window_start = window_start
+        g.window_end = window_end
         # Log snapshot diagnostics: number of nodes and edges for defendability
         try:
             n_nodes = g.x.shape[0]
@@ -362,18 +368,16 @@ def _build_snapshots_and_targets(config):
     return snapshots, feat_cols, meta_dates
 
 
-def _split_snapshots_by_date(snapshots, dates, val_start, test_start):
-    val_start = pd.to_datetime(val_start)
-    test_start = pd.to_datetime(test_start)
+def _split_snapshots_by_date(snapshots, dates, config, *, label="gnn", debug=False):
+    train_mask, val_mask, test_mask, _ = split_time(dates, config, label=label, debug=debug)
 
     train_list, val_list, test_list = [], [], []
-
-    for g, d in zip(snapshots, dates):
-        if d < val_start:
+    for g, is_train, is_val, is_test in zip(snapshots, train_mask, val_mask, test_mask):
+        if is_train:
             train_list.append(g)
-        elif d < test_start:
+        elif is_val:
             val_list.append(g)
-        else:
+        elif is_test:
             test_list.append(g)
 
     return train_list, val_list, test_list
@@ -418,6 +422,7 @@ def train_gnn(config):
         {
             "model": config["model"],
             "data": config["data"],
+            "preprocess": config.get("preprocess", {"scale_features": True, "scaler": "standard"}),
             "graph": {
                 "use_corr": bool(graph_flags.get("use_corr", False)),
                 "use_sector": bool(graph_flags.get("use_sector", False)),
@@ -516,8 +521,9 @@ def train_gnn(config):
             if issues:
                 raise ValueError(f"[gnn] Sanity failed: {'; '.join(issues)}")
 
+    debug = bool(config.get("debug", {}).get("leakage", False))
     train_snaps, val_snaps, test_snaps = _split_snapshots_by_date(
-        snapshots, dates, config["training"]["val_start"], config["training"]["test_start"]
+        snapshots, dates, config, label="gnn", debug=debug
     )
 
     # Target scaling to avoid collapse to tiny constants
