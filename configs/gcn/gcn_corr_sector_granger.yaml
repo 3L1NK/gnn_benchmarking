@@ -17,6 +17,7 @@ graph:
   use_corr: true
   use_sector: true
   use_granger: true
+  make_undirected: false
   granger_maxlag: 5
   granger_alpha: 0.01
   granger_topk: 50

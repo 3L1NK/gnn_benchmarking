@@ -54,6 +54,13 @@ def _build_snapshots_and_targets(config):
     use_corr = bool(graph_cfg.get("use_corr", False))
     use_sector = bool(graph_cfg.get("use_sector", False))
     use_granger = bool(graph_cfg.get("use_granger", False))
+    make_undirected_cfg = graph_cfg.get("make_undirected")
+    if make_undirected_cfg is None:
+        make_undirected_cfg = graph_cfg.get("force_undirected")
+    if make_undirected_cfg is None:
+        make_undirected = not use_granger
+    else:
+        make_undirected = bool(make_undirected_cfg)
 
     # correlation params
     corr_top_k = int(graph_cfg.get("corr_top_k", 10))
@@ -107,8 +114,7 @@ def _build_snapshots_and_targets(config):
     dates = sorted(df["date"].unique())
 
     # Precompute Granger edges from train-only data when requested.
-    granger_map = {}
-    granger_edges_list = []
+    granger_map_dir = {}
     if use_granger:
         from utils.graphs import granger_edges
         val_start = pd.to_datetime(config["training"]["val_start"]) if "training" in config else None
@@ -120,16 +126,13 @@ def _build_snapshots_and_targets(config):
             print(f"[gnn] granger window={train_dates.min().date()}..{train_dates.max().date()}")
         try:
             gr_edges = granger_edges(df_raw.loc[train_mask], max_lag=int(config.get("granger", {}).get("max_lag", 2)), p_threshold=float(config.get("granger", {}).get("p_threshold", 0.05)))
-            # symmetrize and store as unordered pair -> weight
             for u, v, w in gr_edges:
                 if u == v:
                     continue
-                key = tuple(sorted((u, v)))
-                granger_map[key] = max(granger_map.get(key, 0.0), float(abs(w)))
-            granger_edges_list = list(granger_map.items())
+                key = (u, v)
+                granger_map_dir[key] = max(granger_map_dir.get(key, 0.0), float(abs(w)))
         except Exception:
-            granger_map = {}
-            granger_edges_list = []
+            granger_map_dir = {}
     snapshots = []
     meta_dates = []
 
@@ -238,17 +241,17 @@ def _build_snapshots_and_targets(config):
                         key = tuple(sorted((i, j)))
                         sector_map_pairs[key] = max(sector_map_pairs.get(key, 0.0), float(industry_weight))
 
-        # Granger edges: use precomputed granger_map (ticker-name keys). Map to indices for today's universe
+        # Granger edges: use precomputed directed map (ticker-name keys). Map to indices for today's universe
         gr_map_idx = {}
-        if use_granger and granger_map:
-            for (u, v), w in granger_map.items():
+        if use_granger and granger_map_dir:
+            for (u, v), w in granger_map_dir.items():
                 if u not in tickers_list or v not in tickers_list:
                     continue
                 i = tickers_list.index(u)
                 j = tickers_list.index(v)
                 if not (valid_mask_np[i] and valid_mask_np[j]):
                     continue
-                key = tuple(sorted((i, j)))
+                key = (i, j)
                 gr_map_idx[key] = max(gr_map_idx.get(key, 0.0), float(w))
 
         # --- Apply per-edge-type trimming and scalar weighting BEFORE merging ---
@@ -275,10 +278,24 @@ def _build_snapshots_and_targets(config):
 
             return {k: v for k, v in pair_map.items() if k in keep_keys}
 
+        def trim_directed_map(edge_map, top_k):
+            """Trim directed edge map so each source has at most `top_k` outgoing edges."""
+            if not edge_map or top_k <= 0:
+                return {}
+            adj = {}
+            for (src, dst), w in edge_map.items():
+                adj.setdefault(src, []).append(((src, dst), w))
+            keep_keys = set()
+            for _, edges in adj.items():
+                edges_sorted = sorted(edges, key=lambda t: t[1], reverse=True)
+                for (key, _) in edges_sorted[:top_k]:
+                    keep_keys.add(key)
+            return {k: v for k, v in edge_map.items() if k in keep_keys}
+
         # trim per-type maps
         corr_map = trim_pair_map(corr_map, corr_top_k if corr_top_k is not None else 0, n_nodes)
         sector_map_pairs = trim_pair_map(sector_map_pairs, sector_top_k if sector_top_k is not None else 0, n_nodes)
-        gr_map_idx = trim_pair_map(gr_map_idx, granger_top_k if granger_top_k is not None else 0, n_nodes)
+        gr_map_idx = trim_directed_map(gr_map_idx, granger_top_k if granger_top_k is not None else 0)
 
         # apply per-edge-type scalar weights
         # Corr: scale normalized corr weights by w_corr
@@ -302,12 +319,20 @@ def _build_snapshots_and_targets(config):
 
         # Merge maps (no cross-type normalization)
         final_map = {}
-        for k, v in corr_map.items():
-            final_map[k] = final_map.get(k, 0.0) + v
-        for k, v in sector_map_pairs.items():
-            final_map[k] = final_map.get(k, 0.0) + v
-        for k, v in gr_map_idx.items():
-            final_map[k] = final_map.get(k, 0.0) + v
+
+        def add_edge(src, dst, weight):
+            final_map[(src, dst)] = final_map.get((src, dst), 0.0) + weight
+
+        for (i, j), v in corr_map.items():
+            add_edge(i, j, v)
+            add_edge(j, i, v)
+        for (i, j), v in sector_map_pairs.items():
+            add_edge(i, j, v)
+            add_edge(j, i, v)
+        for (i, j), v in gr_map_idx.items():
+            add_edge(i, j, v)
+            if make_undirected:
+                add_edge(j, i, v)
 
         # Ensure self-loops are present and strong: weight = 1.0
         for i_node in range(n_nodes):
@@ -316,19 +341,18 @@ def _build_snapshots_and_targets(config):
         if not final_map:
             continue
 
-        # Expand unordered pairs into directed edges (both directions)
+        # Expand directed map into edge list
         src = []
         dst = []
         w_vals = []
         for (i, j), w in final_map.items():
-            src.extend([i, j])
-            dst.extend([j, i])
-            # keep per-direction weight; clamp non-self edges to max_edge_weight
+            src.append(i)
+            dst.append(j)
             if i == j:
-                w_vals.extend([1.0, 1.0])
+                w_vals.append(1.0)
             else:
                 w_clamped = float(min(w, max_edge_weight)) if np.isfinite(w) else 0.0
-                w_vals.extend([w_clamped, w_clamped])
+                w_vals.append(w_clamped)
 
         edge_index = torch.tensor([src, dst], dtype=torch.long)
         edge_weight = torch.tensor(w_vals, dtype=torch.float32)
@@ -353,6 +377,7 @@ def _build_snapshots_and_targets(config):
         g.date = d
         g.window_start = window_start
         g.window_end = window_end
+        g.is_directed = bool(use_granger and not make_undirected)
         # Log snapshot diagnostics: number of nodes and edges for defendability
         try:
             n_nodes = g.x.shape[0]
@@ -418,6 +443,14 @@ def train_gnn(config):
 
     graph_flags = config.get("graph", {})
     gr_cfg = config.get("granger", {})
+    make_undirected_cfg = graph_flags.get("make_undirected")
+    if make_undirected_cfg is None:
+        make_undirected_cfg = graph_flags.get("force_undirected")
+    if make_undirected_cfg is None:
+        make_undirected = not bool(graph_flags.get("use_granger", False))
+    else:
+        make_undirected = bool(make_undirected_cfg)
+    graph_directed = bool(graph_flags.get("use_granger", False) and not make_undirected)
     cache_id = cache_key(
         {
             "model": config["model"],
@@ -429,6 +462,7 @@ def train_gnn(config):
                 "use_granger": bool(graph_flags.get("use_granger", False)),
                 "corr_top_k": int(graph_flags.get("corr_top_k", 10)),
                 "corr_min_periods": int(graph_flags.get("corr_min_periods", 0)),
+                "make_undirected": make_undirected,
             },
             "granger": {
                 "max_lag": int(gr_cfg.get("max_lag", 2)),
@@ -447,11 +481,11 @@ def train_gnn(config):
             print(f"[gnn] loaded snapshots from cache {cache_file}")
         else:
             snapshots, feat_cols, dates = _build_snapshots_and_targets(config)
-            cache_save(cache_file, {"snapshots": snapshots, "feat_cols": feat_cols, "dates": dates})
+            cache_save(cache_file, {"snapshots": snapshots, "feat_cols": feat_cols, "dates": dates, "graph_directed": graph_directed, "make_undirected": make_undirected})
             print(f"[gnn] saved snapshots to cache {cache_file}")
     else:
         snapshots, feat_cols, dates = _build_snapshots_and_targets(config)
-        cache_save(cache_file, {"snapshots": snapshots, "feat_cols": feat_cols, "dates": dates})
+        cache_save(cache_file, {"snapshots": snapshots, "feat_cols": feat_cols, "dates": dates, "graph_directed": graph_directed, "make_undirected": make_undirected})
         print(f"[gnn] saved snapshots to cache {cache_file}")
 
     # Mandatory logging for defensibility: edge types enabled and snapshot stats
@@ -459,6 +493,14 @@ def train_gnn(config):
     use_corr = bool(graph_cfg_print.get("use_corr", False))
     use_sector = bool(graph_cfg_print.get("use_sector", False))
     use_granger = bool(graph_cfg_print.get("use_granger", False))
+    make_undirected_cfg = graph_cfg_print.get("make_undirected")
+    if make_undirected_cfg is None:
+        make_undirected_cfg = graph_cfg_print.get("force_undirected")
+    if make_undirected_cfg is None:
+        make_undirected = not use_granger
+    else:
+        make_undirected = bool(make_undirected_cfg)
+    graph_directed = bool(use_granger and not make_undirected)
     # mean nodes/edges per snapshot
     try:
         node_counts = [g.x.shape[0] for g in snapshots]
@@ -466,6 +508,7 @@ def train_gnn(config):
         mean_nodes = float(np.mean(node_counts)) if node_counts else 0.0
         mean_edges = float(np.mean(edge_counts)) if edge_counts else 0.0
         print(f"[gnn] edge types enabled: use_corr={use_corr} use_sector={use_sector} use_granger={use_granger}")
+        print(f"[gnn] graph directed={graph_directed} make_undirected={make_undirected}")
         print(f"[gnn] mean nodes per snapshot={mean_nodes:.1f}, mean directed edges per snapshot={mean_edges:.1f}")
         # Compute mean degree (undirected) and max degree per node across snapshots
         try:
@@ -824,6 +867,8 @@ def train_gnn(config):
         "ic_tstat": ic_tstat,
         "volatility": vol,
         "max_drawdown": max_dd,
+        "graph_directed": graph_directed,
+        "graph_make_undirected": make_undirected,
     }
     summary_path = out_dir / f"{run_tag}_summary.json"
     with summary_path.open("w") as f:

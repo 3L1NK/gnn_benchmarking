@@ -85,6 +85,8 @@ if __name__ == "__main__":
                 graph["w_sector"] = float(ge.get("w_sector", 0.2))
             if "w_granger" in ge:
                 graph["w_granger"] = float(ge.get("w_granger", 0.2))
+            if "make_undirected" in ge:
+                graph["make_undirected"] = bool(ge.get("make_undirected"))
             if "sector_top_k" in ge:
                 graph["sector_top_k"] = int(ge.get("sector_top_k", 5))
             if "granger_top_k" in ge:
