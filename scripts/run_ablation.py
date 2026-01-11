@@ -116,6 +116,6 @@ def main(folder):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: scripts/run_ablation.py <configs/ablation/tgcn|tgat>")
+        print("Usage: scripts/run_ablation.py <configs/ablation/tgcn|tgat>  # static baselines")
         sys.exit(1)
     main(sys.argv[1])

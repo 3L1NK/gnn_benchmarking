@@ -1,8 +1,7 @@
-experiment_name: tgcn
-
+experiment_name: tgcn_static
 model:
   family: gnn
-  type: tgcn
+  type: tgcn_static
   input_dim: 32
   hidden_dim: 128
   num_layers: 2

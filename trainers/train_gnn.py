@@ -594,6 +594,14 @@ def train_gnn(config):
 
     requested_layers = int(config["model"].get("num_layers", 1))
     model_type = config["model"]["type"].lower()
+    model_label = model_type
+    if model_type == "tgcn":
+        print("[gnn] Warning: 'tgcn' runs a static TGCN cell (no temporal state). Use type 'tgcn_static'.")
+        model_label = "tgcn_static"
+    elif model_type == "tgat":
+        print("[gnn] Warning: 'tgat' runs a static GAT baseline (no temporal attention). Use type 'tgat_static'.")
+        model_label = "tgat_static"
+
     num_layers = max(1, min(requested_layers, 3))
     if model_type == "gcn" and requested_layers > 2:
         print("[gnn] Warning: GCN depth >2 can over-smooth; clamping to at most 3 layers.")
@@ -605,10 +613,9 @@ def train_gnn(config):
         dropout_val = 0.2
     attn_dropout_val = float(config["model"].get("attn_dropout", dropout_val))
 
-    # Allow temporal GNN (TGCN) as a model option. Use StaticTGCN wrapper
-    # to keep compatibility with the training loop signature.
-    mtype = config["model"]["type"].lower()
-    if mtype == "tgcn":
+    # Allow TGCN/TGAT-style baselines in static (snapshot) mode.
+    mtype = model_label
+    if mtype == "tgcn_static":
         if StaticTGCN is None:
             raise RuntimeError("TGCN model support is unavailable (missing dependency).")
         model = StaticTGCN(
@@ -616,7 +623,7 @@ def train_gnn(config):
             hidden_dim=config["model"]["hidden_dim"],
             dropout=dropout_val,
         ).to(device)
-    elif mtype == "tgat":
+    elif mtype == "tgat_static":
         if StaticTGAT is None:
             raise RuntimeError("TGAT model support is unavailable (missing dependency).")
         # allow requesting more layers for TGAT-like model
@@ -629,7 +636,7 @@ def train_gnn(config):
         ).to(device)
     else:
         model = StaticGNN(
-            gnn_type=config["model"]["type"],
+            gnn_type=model_type,
             input_dim=len(feat_cols),
             hidden_dim=config["model"]["hidden_dim"],
             num_layers=num_layers,
@@ -641,7 +648,7 @@ def train_gnn(config):
 
     # If using GAT with weighted edges enabled, warn that GATConv ignores edge_weight
     try:
-        if config["model"]["type"].lower() == "gat" and (use_corr or use_sector or use_granger):
+        if model_type in {"gat", "tgat_static"} and (use_corr or use_sector or use_granger):
             print("[gnn] Warning: model GAT ignores edge weights provided in `edge_weight`.\n" \
                   "If you rely on weighting, consider using GCN or implementing weighted attention.")
     except Exception:

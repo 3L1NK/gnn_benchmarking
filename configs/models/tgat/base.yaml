@@ -1,6 +1,6 @@
 model:
   family: gnn
-  type: tgat
+  type: tgat_static
   # per-model defaults (override in ablations)
   input_dim: 32
   hidden_dim: 128

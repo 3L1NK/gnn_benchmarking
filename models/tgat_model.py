@@ -7,9 +7,9 @@ class StaticTGAT(nn.Module):
     """
     Lightweight TGAT-like model that exposes the same `forward(x, edge_index, edge_weight=None)`
     signature expected by the training loop. This implementation uses stacked GATConv
-    layers (temporal aspects are not modelled explicitly here to remain compatible
-    with the snapshot-per-day training loop). If you later add a true temporal
-    TGAT cell, swap it in here while keeping the same forward signature.
+    layers and is a static snapshot baseline (no temporal attention/state).
+    If you later add a true temporal TGAT cell, swap it in here while keeping
+    the same forward signature.
     """
 
     def __init__(self, input_dim: int, hidden_dim: int, num_layers: int = 2, heads: int = 2, dropout: float = 0.0, use_residual: bool = True):

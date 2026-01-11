@@ -8,6 +8,8 @@ from torch_geometric_temporal.nn.recurrent import TGCN
 class TemporalGCNModel(nn.Module):
     """
     Simple temporal GCN model using the TGCN cell.
+    Note: this is not used by the current training loop; it is kept for
+    future temporal-sequence experiments.
 
     At each time step t it takes:
       x_t           node features at day t, shape [N_t, F]
@@ -41,6 +43,8 @@ class StaticTGCN(nn.Module):
     compatible with the existing training loop. It runs the TGCN cell with
     a zeroed/absent hidden state and returns only the logits tensor so the
     trainer can call `model(x, edge_index, edge_weight)` as with other models.
+    This is a static snapshot baseline; it does NOT preserve hidden state
+    across time steps.
     """
 
     def __init__(self, input_dim, hidden_dim, dropout=0.0):

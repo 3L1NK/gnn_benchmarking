@@ -2,7 +2,7 @@ include:
   - "../base.yaml"
   - "../../../default.yaml"
 
-# Ablation: increase model depth to 2 layers for the TGCN
+# Ablation: increase model depth to 2 layers for the TGCN-static
 model:
   num_layers: 2
 

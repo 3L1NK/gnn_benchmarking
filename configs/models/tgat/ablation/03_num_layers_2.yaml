@@ -2,7 +2,7 @@ include:
   - "../base.yaml"
   - "../../../default.yaml"
 
-# Ablation: increase model depth to 2 layers for the TGAT-like model
+# Ablation: increase model depth to 2 layers for the TGAT-like static GAT
 model:
   num_layers: 2
 

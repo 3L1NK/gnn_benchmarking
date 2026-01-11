@@ -1,8 +1,7 @@
-experiment_name: tgat
-
+experiment_name: tgat_static
 model:
   family: gnn
-  type: tgat
+  type: tgat_static
   input_dim: 32
   hidden_dim: 128
   num_layers: 2
