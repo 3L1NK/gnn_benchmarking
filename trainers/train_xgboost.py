@@ -1,5 +1,6 @@
 # trainers/train_xgboost.py
 from pathlib import Path
+import json
 
 import numpy as np
 import pandas as pd
@@ -7,7 +8,7 @@ import pandas as pd
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
 from utils.graphs import rolling_corr_edges, graphical_lasso_precision, granger_edges
-from utils.metrics import rank_ic, hit_rate
+from utils.metrics import rank_ic, hit_rate, sharpe_ratio
 from utils.backtest import backtest_long_short, backtest_buy_and_hold, backtest_long_only
 from utils.plot import (
     plot_equity_curve,
@@ -187,7 +188,6 @@ class XGBoostTrainer:
             daily_metrics.append({"date": d, "ic": ic, "hit": hit})
 
         daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
-        daily_metrics.to_csv(self.out_dir / f"{name}_daily_metrics.csv", index=False)
         
         # IC time series plot
         plot_daily_ic(
@@ -216,6 +216,23 @@ class XGBoostTrainer:
             transaction_cost_bps=self.config["evaluation"]["transaction_cost_bps"],
             risk_free_rate=self.config["evaluation"]["risk_free_rate"],
         )
+        equity_curve = equity_curve.copy()
+        equity_curve.index = pd.to_datetime(equity_curve.index)
+        daily_ret_series = pd.Series(daily_ret, index=equity_curve.index[: len(daily_ret)])
+        dd = equity_curve / equity_curve.cummax() - 1.0
+        daily_metrics = daily_metrics.merge(
+            pd.DataFrame(
+                {
+                    "date": daily_ret_series.index,
+                    "daily_return": daily_ret_series.values,
+                    "drawdown": dd.reindex(daily_ret_series.index).values,
+                }
+            ),
+            on="date",
+            how="left",
+        )
+        daily_metrics.to_csv(self.out_dir / f"{name}_daily_metrics.csv", index=False)
+
         equity_curve.to_csv(self.out_dir / f"{name}_equity_curve.csv", header=["value"])
         plot_equity_curve(
             equity_curve,
@@ -234,6 +251,38 @@ class XGBoostTrainer:
             title=f"{name}: Model vs Buy & Hold",
             out_path=self.out_dir / f"{name}_vs_buy_and_hold.png",
         )
+
+        # Summary + rolling metrics for thesis reporting
+        run_tag = self.config.get("experiment_name", name)
+        ic_series = daily_metrics.set_index("date")["ic"].dropna()
+        ic_mean = float(ic_series.mean()) if not ic_series.empty else float("nan")
+        ic_std = float(ic_series.std()) if not ic_series.empty else float("nan")
+        ic_tstat = float(ic_mean / (ic_std / np.sqrt(len(ic_series)))) if ic_series.size > 1 and ic_std > 0 else float("nan")
+        vol = float(np.std(daily_ret_series.values) * np.sqrt(252)) if not daily_ret_series.empty else float("nan")
+        max_dd = float(dd.min()) if not dd.empty else float("nan")
+
+        summary = {
+            "run_tag": run_tag,
+            "model_type": name,
+            "stats": stats,
+            "buy_and_hold_stats": self.bh_stats,
+            "ic_mean": ic_mean,
+            "ic_tstat": ic_tstat,
+            "volatility": vol,
+            "max_drawdown": max_dd,
+        }
+        summary_path = self.out_dir / f"{name}_summary.json"
+        with summary_path.open("w") as f:
+            json.dump(summary, f, indent=2)
+
+        rolling_window = int(self.config.get("evaluation", {}).get("rolling_window", 63))
+        rolling = pd.DataFrame({"date": daily_metrics["date"]}).copy()
+        rolling["rolling_sharpe"] = daily_ret_series.rolling(rolling_window).apply(
+            lambda x: sharpe_ratio(x, self.config["evaluation"]["risk_free_rate"]) if len(x) > 1 else np.nan,
+            raw=False,
+        ).values
+        rolling["rolling_ic_mean"] = ic_series.reindex(daily_metrics["date"]).rolling(rolling_window).mean().values
+        rolling.to_csv(self.out_dir / f"{name}_rolling_metrics.csv", index=False)
     
     
     def train_xgb_raw(self):

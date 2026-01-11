@@ -1,0 +1,19 @@
+{
+  "run_tag": "xgb_raw",
+  "model_type": "xgb_raw",
+  "stats": {
+    "final_value": 1.9212984470376684,
+    "sharpe": 0.047547516489484486,
+    "sortino": 0.057494185351450434,
+    "avg_turnover": 0.13996815286624203
+  },
+  "buy_and_hold_stats": {
+    "final_value": 4.866998453790327,
+    "sharpe": 0.07702448582198528,
+    "sortino": 0.10846150215335452
+  },
+  "ic_mean": 0.010444577062719578,
+  "ic_tstat": 1.6940056466077291,
+  "volatility": 0.20017094039082517,
+  "max_drawdown": -0.3050075828196097
+}

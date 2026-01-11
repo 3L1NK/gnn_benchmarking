@@ -5,7 +5,7 @@ from .metrics import sharpe_ratio, sortino_ratio
 def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
     """
     price_panel has columns: date, ticker, log_ret_1d (or some daily return).
-    Equal weight in all tickers at start, never rebalance.
+    Equal weight in all tickers at start, never rebalance (weights drift).
     """
 
     df = price_panel.copy()
@@ -13,17 +13,24 @@ def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
 
     # pivot returns to matrix [dates, tickers]
     ret_df = df.pivot(index="date", columns="ticker", values="log_ret_1d").sort_index()
+
+    # Fix universe at start date (no entry for tickers without a start return).
+    start_date = ret_df.index[0]
+    start_mask = ret_df.loc[start_date].notna()
+    ret_df = ret_df.loc[:, start_mask]
+
+    # Fill remaining missing values as 0.0 (treat gaps as flat returns)
     ret_df = ret_df.fillna(0.0)
 
     # The input column is log returns (log_ret_1d). Convert to simple returns
     # before compounding: simple_ret = exp(log_ret) - 1
-    ret_mat = np.expm1(ret_df.values)  # shape [T, N]
+    simple_ret = np.expm1(ret_df.values)  # shape [T, N]
 
-    n_assets = ret_mat.shape[1]
-    w = np.ones(n_assets) / n_assets
-
-    port_ret = ret_mat.dot(w)  # shape [T]
-    equity = (1.0 + port_ret).cumprod()
+    # Buy-and-hold: equal dollars at t0, no rebalance.
+    # Portfolio equity is mean of cumulative wealth paths.
+    cum_wealth = (1.0 + simple_ret).cumprod(axis=0)  # shape [T, N]
+    equity = cum_wealth.mean(axis=1)
+    port_ret = pd.Series(equity, index=ret_df.index).pct_change().fillna(0.0).values
 
     eq_series = pd.Series(equity, index=ret_df.index)
 

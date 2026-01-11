@@ -1,6 +1,7 @@
 # trainers/train_gnn.py
 
 import time
+import json
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +24,7 @@ except Exception:
 from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
-from utils.metrics import rank_ic, hit_rate
+from utils.metrics import rank_ic, hit_rate, sharpe_ratio
 from utils.backtest import backtest_long_only
 from utils.baseline import get_global_buy_and_hold
 from utils.plot import (
@@ -729,7 +730,6 @@ def train_gnn(config):
         hit = hit_rate(g["pred"], g["realized_ret"], top_k=config["evaluation"]["top_k"])
         daily_metrics.append({"date": d, "ic": ic, "hit": hit})
     daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
-    daily_metrics.to_csv(out_dir / f"{config['model']['type']}_daily_metrics.csv", index=False)
 
     ic_path = out_dir / f"{config['model']['type']}_ic_timeseries.png"
     ic_hist_path = out_dir / f"{config['model']['type']}_ic_histogram.png"
@@ -755,6 +755,24 @@ def train_gnn(config):
         eq_path,
     )
     print(f"[{config['model']['type'].upper()}] Saved equity curve to {eq_path}")
+
+    # Enrich daily metrics with returns and drawdown for thesis-grade reporting
+    eq_series = equity_curve.copy()
+    eq_series.index = pd.to_datetime(eq_series.index)
+    daily_ret_series = pd.Series(daily_ret, index=eq_series.index[: len(daily_ret)])
+    dd = eq_series / eq_series.cummax() - 1.0
+    daily_metrics = daily_metrics.merge(
+        pd.DataFrame(
+            {
+                "date": daily_ret_series.index,
+                "daily_return": daily_ret_series.values,
+                "drawdown": dd.reindex(daily_ret_series.index).values,
+            }
+        ),
+        on="date",
+        how="left",
+    )
+    daily_metrics.to_csv(out_dir / f"{config['model']['type']}_daily_metrics.csv", index=False)
 
     # Global buy-and-hold baseline
     eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
@@ -783,6 +801,39 @@ def train_gnn(config):
         out_path=comp_path,
     )
     print(f"[{config['model']['type'].upper()}] Saved equity comparison to {comp_path}")
+
+    # Summary metrics (IC stats, volatility, max drawdown)
+    run_tag = config.get("experiment_name", config["model"]["type"])
+    ic_series = daily_metrics.set_index("date")["ic"].dropna()
+    ic_mean = float(ic_series.mean()) if not ic_series.empty else float("nan")
+    ic_std = float(ic_series.std()) if not ic_series.empty else float("nan")
+    ic_tstat = float(ic_mean / (ic_std / np.sqrt(len(ic_series)))) if ic_series.size > 1 and ic_std > 0 else float("nan")
+    vol = float(np.std(daily_ret_series.values) * np.sqrt(252)) if not daily_ret_series.empty else float("nan")
+    max_dd = float(dd.min()) if not dd.empty else float("nan")
+
+    summary = {
+        "run_tag": run_tag,
+        "model_type": config["model"]["type"],
+        "stats": stats,
+        "buy_and_hold_stats": stats_bh,
+        "ic_mean": ic_mean,
+        "ic_tstat": ic_tstat,
+        "volatility": vol,
+        "max_drawdown": max_dd,
+    }
+    summary_path = out_dir / f"{run_tag}_summary.json"
+    with summary_path.open("w") as f:
+        json.dump(summary, f, indent=2)
+
+    # Rolling metrics
+    rolling_window = int(config.get("evaluation", {}).get("rolling_window", 63))
+    rolling = pd.DataFrame({"date": daily_metrics["date"]}).copy()
+    rolling["rolling_sharpe"] = daily_ret_series.rolling(rolling_window).apply(
+        lambda x: sharpe_ratio(x, config["evaluation"]["risk_free_rate"]) if len(x) > 1 else np.nan,
+        raw=False,
+    ).values
+    rolling["rolling_ic_mean"] = ic_series.reindex(daily_metrics["date"]).rolling(rolling_window).mean().values
+    rolling.to_csv(out_dir / f"{run_tag}_rolling_metrics.csv", index=False)
 
     print(f"{config['model']['type'].upper()} backtest stats", stats)
     print("Buy-and-hold stats", stats_bh)

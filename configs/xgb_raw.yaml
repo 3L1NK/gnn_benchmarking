@@ -4,11 +4,11 @@ data:
   price_file: "data/processed/prices.parquet"
   start_date: "2000-01-01"
   end_date: "2024-12-31"
-  target_horizon: 5   # weekly horizon for consistency across models
+  target_horizon: 1   # weekly horizon for consistency across models
   lookback_window: 60
 
 tuning:
-  enabled: false        # set to true to run grid search
+  enabled: true       # set to true to run grid search
   # Hyperparameter grid used when tuning.enabled is true. Each value should be a list.
   param_grid:
     max_depth: [3, 5, 8, 10, 12, 15]

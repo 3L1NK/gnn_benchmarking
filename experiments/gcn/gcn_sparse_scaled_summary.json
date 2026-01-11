@@ -1,0 +1,19 @@
+{
+  "run_tag": "gcn_sparse_scaled",
+  "model_type": "gcn",
+  "stats": {
+    "final_value": 1.124707146889763,
+    "sharpe": 0.07062626853126819,
+    "sortino": 0.08991561942119108,
+    "avg_turnover": 0.13354632587859425
+  },
+  "buy_and_hold_stats": {
+    "final_value": 4.866998453790327,
+    "sharpe": 0.07702448582198528,
+    "sortino": 0.10846150215335452
+  },
+  "ic_mean": 0.004351296144458351,
+  "ic_tstat": 0.6003627938796469,
+  "volatility": 0.08770977592119954,
+  "max_drawdown": -0.07680159586551083
+}
