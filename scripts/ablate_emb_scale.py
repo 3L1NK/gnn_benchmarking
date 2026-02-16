@@ -15,18 +15,24 @@ Note: runs can be slow; run on your local `.venv_gnn`.
 import argparse
 import csv
 import os
+import sys
 from copy import deepcopy
-import yaml
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from utils.config_normalize import load_config as load_normalized_config
 
 
 def load_config(path):
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+    return load_normalized_config(path, REPO_ROOT)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/xgb_node2vec.yaml")
+    parser.add_argument("--config", type=str, default="configs/runs/core/xgb_node2vec_corr.yaml")
     parser.add_argument("--scales", type=str, default="0.1,0.2,0.5,1.0")
     parser.add_argument("--rebuild-cache", action="store_true")
     args = parser.parse_args()
@@ -55,7 +61,7 @@ def main():
             results.append({"emb_scale": s, "mean_ic": None, "mean_hit": None, "error": str(e)})
             continue
 
-        out_dir = cfg.get("evaluation", {}).get("out_dir", "experiments/xgb_node2vec")
+        out_dir = cfg.get("evaluation", {}).get("out_dir", "experiments/xgb_node2vec_corr")
         metrics_fp = os.path.join(out_dir, "xgb_node2vec_daily_metrics.csv")
         mean_ic = None
         mean_hit = None
@@ -70,7 +76,7 @@ def main():
         results.append({"emb_scale": s, "mean_ic": mean_ic, "mean_hit": mean_hit, "error": None})
 
     # write summary CSV to the base out_dir
-    summary_out = cfg_base.get("evaluation", {}).get("out_dir", "experiments/xgb_node2vec")
+    summary_out = cfg_base.get("evaluation", {}).get("out_dir", "experiments/xgb_node2vec_corr")
     os.makedirs(summary_out, exist_ok=True)
     summary_fp = os.path.join(summary_out, "emb_scale_ablation.csv")
     keys = ["emb_scale", "mean_ic", "mean_hit", "error"]

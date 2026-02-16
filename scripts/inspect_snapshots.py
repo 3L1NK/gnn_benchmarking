@@ -1,7 +1,7 @@
 """Inspect GNN snapshot caches and print diagnostics.
 
 Usage:
-  python3 scripts/inspect_snapshots.py --config configs/gcn_corr_sector_granger.yaml
+  python3 scripts/inspect_snapshots.py --config configs/runs/core/gcn_corr_sector_granger.yaml
 
 This script will:
 - Load the YAML config
@@ -11,7 +11,6 @@ This script will:
 """
 
 import argparse
-import yaml
 import numpy as np
 import torch
 from pathlib import Path
@@ -23,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from utils.cache import cache_key, cache_path, cache_load
+from utils.config_normalize import load_config as load_normalized_config
 
 
 def compute_cache_id(cfg):
@@ -51,9 +51,7 @@ def main():
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
 
-    cfg_path = Path(args.config)
-    with cfg_path.open("r") as f:
-        cfg = yaml.safe_load(f) or {}
+    cfg = load_normalized_config(args.config, REPO_ROOT)
 
     cache_id = compute_cache_id(cfg)
     cache_file = cache_path("gnn_snapshots", cache_id)

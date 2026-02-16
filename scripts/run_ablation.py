@@ -3,63 +3,47 @@
 Run all ablation configs in a folder and record basic results to results/manifest.csv.
 
 Usage:
-  python3 scripts/run_ablation.py configs/ablation/tgcn
+  python3 scripts/run_ablation.py configs/runs/ablation/tgcn
 
 This script resolves `include` chains (same logic as `train.py`), runs
 `python3 train.py --config <cfg>` for each YAML, and then attempts to read the
 produced equity curve to extract a final value. Results are appended to
 `results/manifest.csv`.
 """
+import argparse
 import subprocess
 import sys
 from pathlib import Path
 import csv
-import yaml
-from copy import deepcopy
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-def _deep_update(base, override):
-    for key, value in override.items():
-        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-            base[key] = _deep_update(base[key], value)
-        else:
-            base[key] = value
-    return base
+from utils.config_normalize import load_config
 
-
-def load_config(config_path):
-    config_path = Path(config_path)
-    with config_path.open("r") as f:
-        cfg = yaml.safe_load(f) or {}
-
-    include_path = cfg.pop("include", None)
-    if include_path:
-        include_path = Path(include_path)
-        if not include_path.is_absolute():
-            candidate = (config_path.parent / include_path).resolve()
-            if candidate.exists():
-                include_path = candidate
-            else:
-                include_path = (Path(__file__).resolve().parent.parent / include_path).resolve()
-        if not include_path.exists():
-            raise FileNotFoundError(f"Included config '{include_path}' does not exist")
-        base = deepcopy(load_config(include_path))
-        return _deep_update(base, cfg)
-
-    return cfg
+FOLDER_ALIASES = {
+    "configs/ablation/tgcn": "configs/runs/ablation/tgcn",
+    "configs/ablation/tgat": "configs/runs/ablation/tgat",
+    "configs/models/tgcn/ablation": "configs/runs/ablation/tgcn",
+    "configs/models/tgat/ablation": "configs/runs/ablation/tgat",
+}
 
 
 def find_equity_file(cfg, cfg_path):
-    # Determine out_dir used by train.py: Path(config['evaluation']['out_dir']) / config['model']['type']
+    # Canonical path uses evaluation.out_dir directly; legacy GNN path also exists.
     out = Path(cfg.get("evaluation", {}).get("out_dir", "experiments/"))
     mtype = cfg.get("model", {}).get("type")
     if mtype is None:
         # try to infer from included base (shouldn't happen if includes resolved)
         mtype = Path(cfg_path).stem
     out_dir = out if isinstance(out, Path) else Path(out)
-    model_dir = out_dir / str(mtype)
-    eq_file = model_dir / f"{mtype}_equity_curve.csv"
-    return eq_file, model_dir
+    canonical = out_dir / f"{mtype}_equity_curve.csv"
+    if canonical.exists():
+        return canonical, out_dir
+    legacy_dir = out_dir / str(mtype)
+    legacy = legacy_dir / f"{mtype}_equity_curve.csv"
+    return legacy, legacy_dir
 
 
 def extract_final_value(eq_file):
@@ -79,7 +63,7 @@ def extract_final_value(eq_file):
 
 
 def main(folder):
-    folder = Path(folder)
+    folder = Path(FOLDER_ALIASES.get(str(Path(folder).as_posix()), str(folder)))
     if not folder.exists() or not folder.is_dir():
         print(f"Folder {folder} does not exist")
         sys.exit(1)
@@ -95,11 +79,11 @@ def main(folder):
 
     for cfg_path in sorted(folder.glob("*.yaml")):
         print(f"Running config: {cfg_path}")
-        proc = subprocess.run([sys.executable, "train.py", "--config", str(cfg_path)], cwd=Path(__file__).resolve().parent.parent)
+        proc = subprocess.run([sys.executable, "train.py", "--config", str(cfg_path)], cwd=REPO_ROOT)
         status = "ok" if proc.returncode == 0 else f"failed:{proc.returncode}"
 
         try:
-            cfg = load_config(cfg_path)
+            cfg = load_config(cfg_path, REPO_ROOT)
         except Exception as e:
             print(f"Failed to load config for postprocessing: {e}")
             cfg = {}
@@ -115,7 +99,7 @@ def main(folder):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: scripts/run_ablation.py <configs/ablation/tgcn|tgat>  # static baselines")
-        sys.exit(1)
-    main(sys.argv[1])
+    parser = argparse.ArgumentParser(description="Run all ablation configs in a folder.")
+    parser.add_argument("folder", help="Ablation folder, e.g. configs/runs/ablation/tgcn")
+    args = parser.parse_args()
+    main(args.folder)

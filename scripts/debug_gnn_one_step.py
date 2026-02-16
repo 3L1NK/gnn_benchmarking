@@ -1,9 +1,8 @@
 """Run a single training step for GNN to inspect losses/gradients/predictions.
 
 Usage:
-  python3 scripts/debug_gnn_one_step.py --config configs/gcn_corr_sector_granger.yaml
+  python3 scripts/debug_gnn_one_step.py --config configs/runs/core/gcn_corr_sector_granger.yaml
 """
-import yaml
 import sys
 from pathlib import Path
 import numpy as np
@@ -15,14 +14,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from utils.cache import cache_key, cache_path, cache_load, cache_save
+from utils.config_normalize import load_config as load_normalized_config
 from trainers.train_gnn import _build_snapshots_and_targets, _split_snapshots_by_date
 from torch_geometric.loader import DataLoader as GeoDataLoader
-from models.gnn_model import StaticGNN
+from models.graph.static_gnn import StaticGNN
 
 
 def load_cfg(path):
-    with open(path, 'r') as f:
-        return yaml.safe_load(f) or {}
+    return load_normalized_config(path, REPO_ROOT)
 
 
 def main():

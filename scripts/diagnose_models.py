@@ -3,11 +3,16 @@ Quick diagnostics to compare LSTM vs XGB+Node2Vec data pipeline.
 
 Run from repo root: `python scripts/diagnose_models.py`
 """
-import yaml
 from pathlib import Path
+import sys
 import numpy as np
 import pandas as pd
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from utils.config_normalize import load_config as load_normalized_config
 from utils.data_loading import load_price_panel
 # avoid importing add_technical_features (depends on statsmodels) in this lightweight script
 # implement a lightweight rolling_corr_edges here to avoid importing statsmodels-dependent utils
@@ -37,8 +42,7 @@ def rolling_corr_edges(panel_df, date, window, threshold):
 
 
 def load_cfg(path):
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+    return load_normalized_config(path, REPO_ROOT)
 
 
 def count_sequences(df, lookback, horizon, id_col="ticker"):
@@ -57,9 +61,9 @@ def count_sequences(df, lookback, horizon, id_col="ticker"):
 
 
 def main():
-    repo = Path(__file__).resolve().parents[1]
-    cfg_xgb = load_cfg(repo / "configs" / "xgb_node2vec.yaml")
-    cfg_lstm = load_cfg(repo / "configs" / "lstm.yaml")
+    repo = REPO_ROOT
+    cfg_xgb = load_cfg(repo / "configs" / "runs" / "core" / "xgb_node2vec_corr.yaml")
+    cfg_lstm = load_cfg(repo / "configs" / "runs" / "core" / "lstm.yaml")
 
     print("Config files loaded:")
     print(" - xgb_node2vec:", cfg_xgb.get("experiment_name", "<none>"))

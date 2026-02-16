@@ -27,7 +27,7 @@ def main():
         print("No results found.")
         return
 
-    cols = ["experiment_id", "model_name", "edge_type", "portfolio_sharpe", "prediction_rank_ic"]
+    cols = ["experiment_id", "model_name", "edge_type", "rebalance_freq", "portfolio_sharpe", "prediction_rank_ic"]
     for col in cols:
         if col not in df.columns:
             df[col] = None

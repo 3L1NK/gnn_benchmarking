@@ -5,11 +5,14 @@ Run from repo root:
   python scripts/check_target_consistency.py
 """
 import argparse
-from copy import deepcopy
 from pathlib import Path
+import sys
 
 import pandas as pd
-import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from trainers.train_gnn import _build_snapshots_and_targets
 from trainers.train_lstm import _build_sequences
@@ -17,72 +20,11 @@ from trainers.train_xgboost import _build_feature_panel
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
 from utils.targets import build_target
+from utils.config_normalize import load_config as load_normalized_config
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _deep_update(base, override):
-    for key, value in override.items():
-        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-            base[key] = _deep_update(base[key], value)
-        else:
-            base[key] = value
-    return base
-
-
+PROJECT_ROOT = REPO_ROOT
 def load_config(config_path: Path) -> dict:
-    with config_path.open("r") as f:
-        cfg = yaml.safe_load(f) or {}
-
-    include_path = cfg.pop("include", None)
-    if include_path:
-        if not isinstance(include_path, list):
-            include_path = [include_path]
-        base = {}
-        for inc in include_path:
-            inc_path = Path(inc)
-            if not inc_path.is_absolute():
-                candidate = (config_path.parent / inc_path).resolve()
-                if candidate.exists():
-                    inc_path = candidate
-                else:
-                    inc_path = (PROJECT_ROOT / inc_path).resolve()
-            if not inc_path.exists():
-                raise FileNotFoundError(f"Included config '{inc_path}' does not exist")
-            base = _deep_update(base, deepcopy(load_config(inc_path)))
-        cfg = _deep_update(base, cfg)
-
-    # Backwards compatibility mapping for older configs that still use graph_edges.
-    if "graph" not in cfg and "graph_edges" in cfg:
-        ge = cfg.get("graph_edges", {}) or {}
-        graph = {}
-        graph["use_corr"] = bool(ge.get("use_correlation", ge.get("use_corr", False)))
-        graph["use_sector"] = bool(ge.get("use_sector", False))
-        if ge.get("use_industry", False):
-            graph["use_sector"] = True
-        graph["use_granger"] = bool(cfg.get("granger", {}).get("enabled", False))
-        if "corr_top_k" in ge:
-            graph["corr_top_k"] = int(ge.get("corr_top_k", 10))
-        if "corr_min_periods" in ge:
-            graph["corr_min_periods"] = int(ge.get("corr_min_periods", 0))
-        if "sector_weight" in ge:
-            graph["sector_weight"] = float(ge.get("sector_weight", 0.2))
-        if "industry_weight" in ge:
-            graph["industry_weight"] = float(ge.get("industry_weight", 0.1))
-        if "w_corr" in ge:
-            graph["w_corr"] = float(ge.get("w_corr", 1.0))
-        if "w_sector" in ge:
-            graph["w_sector"] = float(ge.get("w_sector", 0.2))
-        if "w_granger" in ge:
-            graph["w_granger"] = float(ge.get("w_granger", 0.2))
-        if "sector_top_k" in ge:
-            graph["sector_top_k"] = int(ge.get("sector_top_k", 5))
-        if "granger_top_k" in ge:
-            graph["granger_top_k"] = int(ge.get("granger_top_k", 5))
-        cfg["graph"] = graph
-
-    return cfg
+    return load_normalized_config(config_path, PROJECT_ROOT)
 
 
 def _target_cfg(cfg: dict) -> dict:
@@ -111,9 +53,9 @@ def _assert_targets_match(name: str, model_df: pd.DataFrame, target_df: pd.DataF
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--xgb-config", default="configs/xgb_raw.yaml")
-    parser.add_argument("--lstm-config", default="configs/lstm.yaml")
-    parser.add_argument("--gnn-config", default="configs/gcn/gcn.yaml")
+    parser.add_argument("--xgb-config", default="configs/runs/core/xgb_raw.yaml")
+    parser.add_argument("--lstm-config", default="configs/runs/core/lstm.yaml")
+    parser.add_argument("--gnn-config", default="configs/runs/core/gcn_corr_only.yaml")
     args = parser.parse_args()
 
     cfg_xgb = load_config(Path(args.xgb_config))
