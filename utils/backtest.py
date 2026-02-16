@@ -39,12 +39,14 @@ def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
     return eq_series, port_ret, stats
 
 
-def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate=0.0, rebalance_freq=5):
+def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate=0.0, rebalance_freq=1):
     """
     pred_df columns: date, ticker, pred, realized_ret
-    Long only top_k portfolio, equal weight, rebalancing every `rebalance_freq` days (default 5).
+    Long only top_k portfolio, equal weight, rebalancing every `rebalance_freq` days (default 1).
     Positions are held between rebalances; transaction costs apply on rebalance days.
     """
+    if rebalance_freq < 1:
+        raise ValueError(f"rebalance_freq must be >= 1, got {rebalance_freq}")
 
     df = pred_df.copy()
     df["date"] = pd.to_datetime(df["date"])
