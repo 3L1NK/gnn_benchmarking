@@ -20,26 +20,19 @@ from torch import amp
 from torch.utils.data import Dataset, DataLoader
 from torch.cuda.amp import GradScaler
 
-from models.lstm_model import LSTMModel
+from models.sequence.lstm import LSTMModel
 from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
-from utils.metrics import rank_ic, hit_rate, sharpe_ratio
-from utils.backtest import backtest_long_only
-from utils.baseline import get_global_buy_and_hold
-from utils.plot import (
-    plot_equity_curve,
-    plot_equity_comparison,
-    plot_daily_ic,
-    plot_ic_hist,
-)
 from utils.cache import cache_load, cache_save, cache_key, cache_path
 from utils.device import get_device, default_num_workers
 from utils.sanity import check_tensor
 from utils.targets import build_target
 from utils.preprocessing import scale_features
 from utils.splits import split_time
-from utils.results import build_experiment_result, save_experiment_result
+from utils.predictions import sanitize_predictions
+from utils.eval_runner import evaluate_and_report
+from utils.artifacts import resolve_output_dirs
 
 
 class TensorLSTMDataset(Dataset):
@@ -343,7 +336,8 @@ def train_lstm(config):
     patience = config["training"]["patience"]
     scaler = GradScaler(enabled=use_cuda)
 
-    out_dir = Path(config["evaluation"]["out_dir"])
+    out_dirs = resolve_output_dirs(config, model_type=config.get("model", {}).get("type", "lstm"))
+    out_dir = out_dirs.canonical
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / "best_lstm.pt"
 
@@ -428,143 +422,18 @@ def train_lstm(config):
     pred_df = pd.DataFrame(rows).sort_values("date")
     pred_df.to_csv(out_dir / "lstm_predictions.csv", index=False)
 
-    # 5. IC / hit metrics
-    daily_metrics = []
-    for d, g in pred_df.groupby("date"):
-        ic = rank_ic(g["pred"], g["realized_ret"])
-        hit = hit_rate(
-            g["pred"],
-            g["realized_ret"],
-            top_k=config["evaluation"]["top_k"],
-        )
-        daily_metrics.append({"date": d, "ic": ic, "hit": hit})
-
-    daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
-
-    print("LSTM mean IC:", daily_metrics["ic"].mean())
-    print("LSTM mean hit:", daily_metrics["hit"].mean())
-
-    plot_daily_ic(
-        daily_metrics,
-        out_dir / "lstm_ic_timeseries.png",
-    )
-    plot_ic_hist(
-        daily_metrics,
-        out_dir / "lstm_ic_histogram.png",
-    )
-
-    # 6. Long only backtest, daily rebalancing + buy-and-hold comparison
-    curve, daily_ret, stats = backtest_long_only(
-        pred_df,
-        top_k=config["evaluation"]["top_k"],
-        transaction_cost_bps=config["evaluation"]["transaction_cost_bps"],
-        risk_free_rate=config["evaluation"]["risk_free_rate"],
-        rebalance_freq=5,
-    )
-    print("LSTM backtest stats:", stats)
-
-    # Enrich daily metrics with returns and drawdown
-    curve = curve.copy()
-    curve.index = pd.to_datetime(curve.index)
-    daily_ret_series = pd.Series(daily_ret, index=curve.index[: len(daily_ret)])
-    dd = curve / curve.cummax() - 1.0
-    daily_metrics = daily_metrics.merge(
-        pd.DataFrame(
-            {
-                "date": daily_ret_series.index,
-                "daily_return": daily_ret_series.values,
-                "drawdown": dd.reindex(daily_ret_series.index).values,
-            }
-        ),
-        on="date",
-        how="left",
-    )
-    daily_metrics.to_csv(out_dir / "lstm_daily_metrics.csv", index=False)
-
-    # Global buy-and-hold baseline (precomputed, model independent)
-    eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
-        config,
-        rebuild=config.get("cache", {}).get("rebuild", False),
-        align_start_date=config["training"]["test_start"],
-    )
-    print("[baseline] global buy-and-hold stats", stats_bh)
-
-    # align baseline to test window and rebase both curves to start at 1.0 for plotting
-    start_d = max(curve.index.min(), pred_df["date"].min())
-    end_d = pred_df["date"].max()
-    eq_bh = eq_bh_full.loc[(eq_bh_full.index >= start_d) & (eq_bh_full.index <= end_d)]
-
-    def _rebase(series, start):
-        series = series.loc[series.index >= start]
-        if series.empty:
-            return series
-        return series / series.iloc[0]
-
-    curve_rebased = _rebase(curve, start_d)
-    eq_bh_rebased = _rebase(eq_bh, start_d)
-
-    curve_rebased.to_csv(out_dir / "lstm_equity_curve.csv", header=["value"])
-    plot_equity_curve(curve_rebased, "LSTM long only", out_dir / "lstm_equity_curve.png")
-
-    eq_bh_rebased.to_csv(out_dir / "lstm_buy_and_hold_equity_curve.csv", header=["value"])
-    plot_equity_curve(
-        eq_bh_rebased,
-        "Buy and Hold",
-        out_dir / "lstm_buy_and_hold_equity_curve.png",
-    )
-
-    # Combined comparison plot
-    plot_equity_comparison(
-        curve_rebased,
-        eq_bh_rebased,
-        "LSTM vs Buy and Hold",
-        out_dir / "lstm_equity_comparison.png",
-    )
-
-    # Summary + rolling metrics for thesis reporting
-    run_tag = config.get("experiment_name", "lstm")
-    ic_series = daily_metrics.set_index("date")["ic"].dropna()
-    ic_mean = float(ic_series.mean()) if not ic_series.empty else float("nan")
-    ic_std = float(ic_series.std()) if not ic_series.empty else float("nan")
-    ic_tstat = float(ic_mean / (ic_std / np.sqrt(len(ic_series)))) if ic_series.size > 1 and ic_std > 0 else float("nan")
-    vol = float(np.std(daily_ret_series.values) * np.sqrt(252)) if not daily_ret_series.empty else float("nan")
-    max_dd = float(dd.min()) if not dd.empty else float("nan")
-
-    summary = {
-        "run_tag": run_tag,
-        "model_type": "lstm",
-        "stats": stats,
-        "buy_and_hold_stats": stats_bh,
-        "ic_mean": ic_mean,
-        "ic_tstat": ic_tstat,
-        "volatility": vol,
-        "max_drawdown": max_dd,
-    }
-    summary_path = out_dir / f"{run_tag}_summary.json"
-    with summary_path.open("w") as f:
-        json.dump(summary, f, indent=2)
-
-    results_path = Path(config.get("evaluation", {}).get("results_path", "results/results.jsonl"))
-    result = build_experiment_result(
-        config,
+    pred_df = sanitize_predictions(pred_df, strict_unique=True)
+    summary = evaluate_and_report(
+        config=config,
+        pred_df=pred_df,
+        out_dirs=out_dirs,
+        run_name="lstm",
         model_name=config["model"]["type"],
         model_family=config["model"]["family"],
         edge_type="none",
         directed=False,
         graph_window="",
-        pred_df=pred_df,
-        daily_metrics=daily_metrics,
-        stats=stats,
         train_seconds=train_seconds,
         inference_seconds=inference_seconds,
     )
-    save_experiment_result(result, results_path)
-
-    rolling_window = int(config.get("evaluation", {}).get("rolling_window", 63))
-    rolling = pd.DataFrame({"date": daily_metrics["date"]}).copy()
-    rolling["rolling_sharpe"] = daily_ret_series.rolling(rolling_window).apply(
-        lambda x: sharpe_ratio(x, config["evaluation"]["risk_free_rate"]) if len(x) > 1 else np.nan,
-        raw=False,
-    ).values
-    rolling["rolling_ic_mean"] = ic_series.reindex(daily_metrics["date"]).rolling(rolling_window).mean().values
-    rolling.to_csv(out_dir / f"{run_tag}_rolling_metrics.csv", index=False)
+    print("LSTM primary policy stats:", summary.get("stats", {}))
