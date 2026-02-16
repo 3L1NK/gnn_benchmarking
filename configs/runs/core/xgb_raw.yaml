@@ -10,7 +10,7 @@ data:
   lookback_window: 60
 
 tuning:
-  enabled: true       # set to true to run grid search
+  enabled: false       # set to true to run grid search
   # Hyperparameter grid used when tuning.enabled is true. Each value should be a list.
   param_grid:
     max_depth: [3, 5, 8, 10, 12, 15]
@@ -25,10 +25,10 @@ model:
   type: xgb_raw
 
   params:
-    max_depth: 15 #15
+    max_depth: 8 #15
     learning_rate: 0.01
-    n_estimators: 300 #100
-    subsample: 0.9 #0.7
+    n_estimators: 100 #100
+    subsample: 0.7 #0.7
     colsample_bytree:  0.9 #0.7
     reg_lambda: 0.0 #1.0
 
@@ -40,4 +40,11 @@ evaluation:
   top_k: 20
   transaction_cost_bps: 5
   risk_free_rate: 0.0
+  backtest_policies: [1, 5]
+  primary_rebalance_freq: 1
+  results_path: "results/results.jsonl"
   out_dir: "experiments/xgb_raw"
+
+experiment:
+  protocol_version: "v1_thesis_core"
+  enforce_protocol: true

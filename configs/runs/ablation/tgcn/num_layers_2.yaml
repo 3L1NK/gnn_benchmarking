@@ -1,6 +1,7 @@
 include:
-  - "../models/tgcn_base.yaml"
-  - "../default.yaml"
+  - "configs/templates/models/tgcn_static.yaml"
+
+experiment_name: tgcn_ablation_num_layers_2
 
 # Ablation C: increase model depth to 2 layers for the TGCN-static
 model:
@@ -18,3 +19,4 @@ training:
 
 evaluation:
   top_k: 20
+  out_dir: "experiments/ablation/tgcn/num_layers_2"

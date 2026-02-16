@@ -1,6 +1,7 @@
 include:
-  - "../models/tgat_base.yaml"
-  - "../default.yaml"
+  - "configs/templates/models/tgat_static.yaml"
+
+experiment_name: tgat_ablation_num_layers_2
 
 # Ablation C: increase model depth to 2 layers for the TGAT-like static GAT
 model:
@@ -18,3 +19,4 @@ training:
 
 evaluation:
   top_k: 20
+  out_dir: "experiments/ablation/tgat/num_layers_2"

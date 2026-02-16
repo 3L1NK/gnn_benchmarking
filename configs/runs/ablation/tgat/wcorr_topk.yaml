@@ -1,6 +1,7 @@
 include:
-  - "../models/tgat_base.yaml"
-  - "../default.yaml"
+  - "configs/templates/models/tgat_static.yaml"
+
+experiment_name: tgat_ablation_wcorr_topk
 
 # Ablation A: increase correlation weight and neighbor budget
 graph:
@@ -15,3 +16,4 @@ training:
 
 evaluation:
   top_k: 20
+  out_dir: "experiments/ablation/tgat/wcorr_topk"

@@ -1,4 +1,4 @@
-experiment_name: gcn_corr_sector_granger
+experiment_name: gcn_granger_only
 
 data:
   price_file: "data/processed/prices.parquet"
@@ -14,8 +14,8 @@ data:
   min_history: 250
 
 graph:
-  use_corr: true
-  use_sector: true
+  use_corr: false
+  use_sector: false
   use_granger: true
   make_undirected: false
   granger_maxlag: 5
@@ -49,4 +49,11 @@ evaluation:
   top_k: 20
   transaction_cost_bps: 5
   risk_free_rate: 0.0
-  out_dir: "experiments/gcn_corr_sector_granger"
+  backtest_policies: [1, 5]
+  primary_rebalance_freq: 1
+  results_path: "results/results.jsonl"
+  out_dir: "experiments/gcn_granger_only"
+
+experiment:
+  protocol_version: "v1_thesis_core"
+  enforce_protocol: true

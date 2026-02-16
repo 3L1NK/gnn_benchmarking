@@ -1,4 +1,4 @@
-experiment_name: xgb_node2vec
+experiment_name: xgb_node2vec_corr
 
 data:
   price_file: "data/processed/prices.parquet"
@@ -36,4 +36,11 @@ evaluation:
   top_k: 20
   transaction_cost_bps: 5
   risk_free_rate: 0.0
-  out_dir: "experiments/xgb_node2vec"
+  backtest_policies: [1, 5]
+  primary_rebalance_freq: 1
+  results_path: "results/results.jsonl"
+  out_dir: "experiments/xgb_node2vec_corr"
+
+experiment:
+  protocol_version: "v1_thesis_core"
+  enforce_protocol: true

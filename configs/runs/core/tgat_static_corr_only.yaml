@@ -1,0 +1,11 @@
+experiment_name: tgat_static_corr_only
+
+graph:
+  use_corr: true
+  use_sector: false
+  use_granger: false
+
+evaluation:
+  out_dir: "experiments/tgat_static_corr_only"
+
+include: "configs/templates/models/tgat_static.yaml"
