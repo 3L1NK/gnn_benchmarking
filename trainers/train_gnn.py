@@ -1,7 +1,6 @@
 # trainers/train_gnn.py
 
 import time
-import json
 from pathlib import Path
 
 import numpy as np
@@ -12,34 +11,28 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader as GeoDataLoader
 from torch.cuda.amp import GradScaler
 
-from models.gnn_model import StaticGNN
+from models.graph.static_gnn import StaticGNN
 try:
-    from models.tgcn_model import StaticTGCN
+    from models.graph.tgcn_static import StaticTGCN
 except Exception:
     StaticTGCN = None
 try:
-    from models.tgat_model import StaticTGAT
+    from models.graph.tgat_static import StaticTGAT
 except Exception:
     StaticTGAT = None
 from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
-from utils.metrics import rank_ic, hit_rate, sharpe_ratio
-from utils.backtest import backtest_long_only
-from utils.baseline import get_global_buy_and_hold
-from utils.plot import (
-    plot_daily_ic,
-    plot_ic_hist,
-    plot_equity_curve,
-    plot_equity_comparison,
-)
 from utils.cache import cache_load, cache_save, cache_key, cache_path
 from utils.device import get_device, default_num_workers
 from utils.sanity import check_tensor
 from utils.targets import build_target
 from utils.preprocessing import scale_features
 from utils.splits import split_time
-from utils.results import build_experiment_result, save_experiment_result, edge_type_from_graph_cfg
+from utils.results import edge_type_from_graph_cfg
+from utils.predictions import sanitize_predictions
+from utils.eval_runner import evaluate_and_report
+from utils.artifacts import resolve_output_dirs
 
 
 def _build_snapshots_and_targets(config):
@@ -679,7 +672,8 @@ def train_gnn(config):
     bad_epochs = 0
     patience = config["training"]["patience"]
 
-    out_dir = Path(config["evaluation"]["out_dir"]) / config["model"]["type"]
+    out_dirs = resolve_output_dirs(config, model_type=config["model"]["type"])
+    out_dir = out_dirs.canonical
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / f"best_{config['model']['type']}.pt"
 
@@ -749,177 +743,80 @@ def train_gnn(config):
         for batch in test_loader:
             batch = batch.to(device, non_blocking=True)
             logits = model(batch.x, batch.edge_index, batch.edge_weight)
-            pred = (logits * tgt_std_t + tgt_mean_t).cpu().numpy()
-            y_ret = batch.y.cpu().numpy()
-            valid = batch.valid_mask.cpu().numpy()
-            tickers_raw = batch.tickers
-            tickers = []
-            if isinstance(tickers_raw, list):
-                for item in tickers_raw:
-                    if isinstance(item, (list, tuple, np.ndarray)):
-                        tickers.extend(list(item))
-                    else:
-                        tickers.append(item)
-            else:
-                tickers = list(tickers_raw)
-            tickers = [str(t) for t in tickers]
-            d = batch.date
-            if isinstance(d, (list, np.ndarray, pd.DatetimeIndex)):
-                d = d[0]
-            d = pd.to_datetime(d)
+            pred = (logits * tgt_std_t + tgt_mean_t).detach().cpu().numpy()
+            y_ret = batch.y.detach().cpu().numpy()
+            valid = batch.valid_mask.detach().cpu().numpy()
 
-            for i, t in enumerate(tickers):
-                if i >= len(valid):
-                    break
-                if not valid[i] or not np.isfinite(y_ret[i]):
-                    continue
-                rows.append({
-                    "date": d,
-                    "ticker": t,
-                    "pred": float(pred[i]),
-                    "realized_ret": float(y_ret[i]),
-                })
-            # log stats to diagnose collapse
-            if len(pred) > 0:
-                print(f"[{config['model']['type'].upper()}] test day {d.date()} pred mean {float(np.mean(pred)):.6f} std {float(np.std(pred)):.6f}")
+            ptr = batch.ptr.detach().cpu().numpy() if hasattr(batch, "ptr") else np.array([0, len(pred)], dtype=int)
+            num_graphs = int(len(ptr) - 1)
+            data_list = batch.to_data_list() if hasattr(batch, "to_data_list") else []
+
+            for gidx in range(num_graphs):
+                start_i, end_i = int(ptr[gidx]), int(ptr[gidx + 1])
+                g_data = data_list[gidx] if gidx < len(data_list) else None
+
+                d = None
+                tlist = None
+                if g_data is not None:
+                    try:
+                        d = pd.to_datetime(getattr(g_data, "date"))
+                    except Exception:
+                        d = None
+                    tickers_attr = getattr(g_data, "tickers", None)
+                    if isinstance(tickers_attr, (list, tuple, np.ndarray, pd.Index)):
+                        tlist = [str(t) for t in list(tickers_attr)]
+
+                if d is None:
+                    date_obj = getattr(batch, "date", None)
+                    if isinstance(date_obj, (list, tuple, np.ndarray, pd.DatetimeIndex)) and len(date_obj) > gidx:
+                        d = pd.to_datetime(date_obj[gidx])
+                    else:
+                        d = pd.NaT
+
+                if tlist is None:
+                    tlist = [f"UNK_{k}" for k in range(end_i - start_i)]
+                if len(tlist) != (end_i - start_i):
+                    tlist = (tlist + [f"UNK_{k}" for k in range(end_i - start_i)])[: (end_i - start_i)]
+
+                for local_idx, t in enumerate(tlist):
+                    i = start_i + local_idx
+                    if i >= len(valid):
+                        break
+                    if not valid[i] or not np.isfinite(y_ret[i]):
+                        continue
+                    rows.append(
+                        {
+                            "date": d,
+                            "ticker": str(t),
+                            "pred": float(pred[i]),
+                            "realized_ret": float(y_ret[i]),
+                        }
+                    )
+                if end_i > start_i:
+                    day_pred = pred[start_i:end_i]
+                    print(
+                        f"[{config['model']['type'].upper()}] test day {d.date()} pred mean {float(np.mean(day_pred)):.6f} std {float(np.std(day_pred)):.6f}"
+                    )
     inference_seconds = time.time() - infer_start
 
     pred_df = pd.DataFrame(rows)
+    pred_df = sanitize_predictions(pred_df, strict_unique=True)
     pred_df.to_csv(out_dir / f"{config['model']['type']}_predictions.csv", index=False)
-
-    daily_metrics = []
-    for d, g in pred_df.groupby("date"):
-        std_pred = g["pred"].std()
-        if std_pred < 1e-8:
-            print(f"[{config['model']['type'].upper()}] warning: near-constant predictions on {d.date()}, skipping IC")
-            ic = np.nan
-        else:
-            ic = rank_ic(g["pred"], g["realized_ret"])
-        hit = hit_rate(g["pred"], g["realized_ret"], top_k=config["evaluation"]["top_k"])
-        daily_metrics.append({"date": d, "ic": ic, "hit": hit})
-    daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
-
-    ic_path = out_dir / f"{config['model']['type']}_ic_timeseries.png"
-    ic_hist_path = out_dir / f"{config['model']['type']}_ic_histogram.png"
-    if daily_metrics["ic"].notna().any():
-        plot_daily_ic(daily_metrics, ic_path)
-        plot_ic_hist(daily_metrics, ic_hist_path)
-        print(f"[{config['model']['type'].upper()}] Saved IC plots: {ic_path}, {ic_hist_path}")
-    else:
-        print(f"[{config['model']['type'].upper()}] Skipping IC plots (all IC values NaN)")
-
-    equity_curve, daily_ret, stats = backtest_long_only(
-        pred_df,
-        top_k=config["evaluation"]["top_k"],
-        transaction_cost_bps=config["evaluation"]["transaction_cost_bps"],
-        risk_free_rate=config["evaluation"]["risk_free_rate"],
-        rebalance_freq=5,
-    )
-    equity_curve.to_csv(out_dir / f"{config['model']['type']}_equity_curve.csv", header=["value"])
-    eq_path = out_dir / f"{config['model']['type']}_equity_curve.png"
-    plot_equity_curve(
-        equity_curve,
-        f"{config['model']['type'].upper()} long only",
-        eq_path,
-    )
-    print(f"[{config['model']['type'].upper()}] Saved equity curve to {eq_path}")
-
-    # Enrich daily metrics with returns and drawdown for thesis-grade reporting
-    eq_series = equity_curve.copy()
-    eq_series.index = pd.to_datetime(eq_series.index)
-    daily_ret_series = pd.Series(daily_ret, index=eq_series.index[: len(daily_ret)])
-    dd = eq_series / eq_series.cummax() - 1.0
-    daily_metrics = daily_metrics.merge(
-        pd.DataFrame(
-            {
-                "date": daily_ret_series.index,
-                "daily_return": daily_ret_series.values,
-                "drawdown": dd.reindex(daily_ret_series.index).values,
-            }
-        ),
-        on="date",
-        how="left",
-    )
-    daily_metrics.to_csv(out_dir / f"{config['model']['type']}_daily_metrics.csv", index=False)
-
-    # Global buy-and-hold baseline
-    eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
-        config,
-        rebuild=config.get("cache", {}).get("rebuild", False),
-        align_start_date=config["training"]["test_start"],
-    )
-    print("[baseline] global buy-and-hold stats", stats_bh)
-    start_d, end_d = pred_df["date"].min(), pred_df["date"].max()
-    eq_bh = eq_bh_full.loc[(eq_bh_full.index >= start_d) & (eq_bh_full.index <= end_d)]
-
-    bh_path = out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.png"
-    eq_bh.to_csv(out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.csv", header=["value"])
-    plot_equity_curve(
-        eq_bh,
-        "Buy and Hold",
-        bh_path,
-    )
-    print(f"[{config['model']['type'].upper()}] Saved buy-and-hold curve to {bh_path}")
-
-    comp_path = out_dir / f"{config['model']['type']}_equity_comparison.png"
-    plot_equity_comparison(
-        model_curve=equity_curve,
-        bh_curve=eq_bh,
-        title=f"{config['model']['type'].upper()} vs Buy and Hold",
-        out_path=comp_path,
-    )
-    print(f"[{config['model']['type'].upper()}] Saved equity comparison to {comp_path}")
-
-    # Summary metrics (IC stats, volatility, max drawdown)
-    run_tag = config.get("experiment_name", config["model"]["type"])
-    ic_series = daily_metrics.set_index("date")["ic"].dropna()
-    ic_mean = float(ic_series.mean()) if not ic_series.empty else float("nan")
-    ic_std = float(ic_series.std()) if not ic_series.empty else float("nan")
-    ic_tstat = float(ic_mean / (ic_std / np.sqrt(len(ic_series)))) if ic_series.size > 1 and ic_std > 0 else float("nan")
-    vol = float(np.std(daily_ret_series.values) * np.sqrt(252)) if not daily_ret_series.empty else float("nan")
-    max_dd = float(dd.min()) if not dd.empty else float("nan")
-
-    summary = {
-        "run_tag": run_tag,
-        "model_type": config["model"]["type"],
-        "stats": stats,
-        "buy_and_hold_stats": stats_bh,
-        "ic_mean": ic_mean,
-        "ic_tstat": ic_tstat,
-        "volatility": vol,
-        "max_drawdown": max_dd,
-        "graph_directed": graph_directed,
-        "graph_make_undirected": make_undirected,
-    }
-    summary_path = out_dir / f"{run_tag}_summary.json"
-    with summary_path.open("w") as f:
-        json.dump(summary, f, indent=2)
-
-    results_path = Path(config.get("evaluation", {}).get("results_path", "results/results.jsonl"))
-    result = build_experiment_result(
-        config,
+    summary = evaluate_and_report(
+        config=config,
+        pred_df=pred_df,
+        out_dirs=out_dirs,
+        run_name=model_label,
         model_name=model_label,
         model_family=config["model"]["family"],
         edge_type=edge_type_from_graph_cfg(graph_cfg_print),
         directed=graph_directed,
         graph_window=graph_window,
-        pred_df=pred_df,
-        daily_metrics=daily_metrics,
-        stats=stats,
         train_seconds=train_seconds,
         inference_seconds=inference_seconds,
+        extra_summary={
+            "graph_directed": graph_directed,
+            "graph_make_undirected": make_undirected,
+        },
     )
-    save_experiment_result(result, results_path)
-
-    # Rolling metrics
-    rolling_window = int(config.get("evaluation", {}).get("rolling_window", 63))
-    rolling = pd.DataFrame({"date": daily_metrics["date"]}).copy()
-    rolling["rolling_sharpe"] = daily_ret_series.rolling(rolling_window).apply(
-        lambda x: sharpe_ratio(x, config["evaluation"]["risk_free_rate"]) if len(x) > 1 else np.nan,
-        raw=False,
-    ).values
-    rolling["rolling_ic_mean"] = ic_series.reindex(daily_metrics["date"]).rolling(rolling_window).mean().values
-    rolling.to_csv(out_dir / f"{run_tag}_rolling_metrics.csv", index=False)
-
-    print(f"{config['model']['type'].upper()} backtest stats", stats)
-    print("Buy-and-hold stats", stats_bh)
+    print(f"{config['model']['type'].upper()} primary policy stats", summary.get("stats", {}))
