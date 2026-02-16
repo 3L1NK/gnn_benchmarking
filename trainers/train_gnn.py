@@ -372,14 +372,15 @@ def _build_snapshots_and_targets(config):
         g.window_start = window_start
         g.window_end = window_end
         g.is_directed = bool(use_granger and not make_undirected)
-        # Log snapshot diagnostics: number of nodes and edges for defendability
-        try:
-            n_nodes = g.x.shape[0]
-            n_edges = int(g.edge_index.shape[1]) if g.edge_index is not None else 0
-            valid_nodes = int(valid_mask_np.sum())
-            print(f"[gnn] snapshot {d.date()} nodes={n_nodes} valid_nodes={valid_nodes} edges={n_edges}")
-        except Exception:
-            pass
+        if debug:
+            # Snapshot diagnostics are useful for leakage/debug checks but too noisy for normal runs.
+            try:
+                n_nodes = g.x.shape[0]
+                n_edges = int(g.edge_index.shape[1]) if g.edge_index is not None else 0
+                valid_nodes = int(valid_mask_np.sum())
+                print(f"[gnn] snapshot {d.date()} nodes={n_nodes} valid_nodes={valid_nodes} edges={n_edges}")
+            except Exception:
+                pass
 
         snapshots.append(g)
         meta_dates.append(d)
@@ -563,7 +564,16 @@ def train_gnn(config):
     # sanity checks
     for name, lst in [("snapshots", snapshots)]:
         for g in lst:
-            issues = check_tensor("x", g.x) + check_tensor("y", g.y)
+            x_issues = check_tensor("x", g.x)
+            if "x: contains all-zero feature rows" in x_issues and hasattr(g, "valid_mask"):
+                zero_rows = (g.x.abs().sum(dim=-1) == 0)
+                invalid_rows = ~g.valid_mask.bool()
+                # Zero feature rows are expected for padded/unavailable tickers
+                # as long as those nodes are marked invalid.
+                if bool(torch.all((~zero_rows) | invalid_rows).item()):
+                    x_issues = [i for i in x_issues if i != "x: contains all-zero feature rows"]
+
+            issues = x_issues + check_tensor("y", g.y)
             if issues:
                 raise ValueError(f"[gnn] Sanity failed: {'; '.join(issues)}")
 
@@ -595,7 +605,59 @@ def train_gnn(config):
     val_loader = GeoDataLoader(val_snaps, **{**loader_kwargs, "shuffle": False})
     test_loader = GeoDataLoader(test_snaps, **{**loader_kwargs, "shuffle": False})
 
+    out_dirs = resolve_output_dirs(config, model_type=config["model"]["type"])
+    out_dir = out_dirs.canonical
+    out_dir.mkdir(parents=True, exist_ok=True)
+    model_path = out_dir / f"best_{config['model']['type']}.pt"
+    legacy_model_path = None
+    if out_dirs.legacy is not None:
+        legacy_model_path = out_dirs.legacy / f"best_{config['model']['type']}.pt"
+
+    skip_training = bool(config["training"].get("skip_training_if_checkpoint", False))
+    checkpoint_to_load = model_path
+    if skip_training and not model_path.exists() and legacy_model_path is not None and legacy_model_path.exists():
+        checkpoint_to_load = legacy_model_path
+
+    def _infer_num_layers_from_state_dict(state_dict):
+        idxs = set()
+        for key in state_dict.keys():
+            if not key.startswith("convs."):
+                continue
+            parts = key.split(".")
+            if len(parts) > 1 and parts[1].isdigit():
+                idxs.add(int(parts[1]))
+        return (max(idxs) + 1) if idxs else None
+
+    def _infer_heads_from_state_dict(state_dict):
+        # GAT params usually store attention tensors as [1, heads, hidden].
+        key = "convs.0.att_src"
+        if key not in state_dict:
+            return None
+        tensor = state_dict.get(key)
+        if tensor is None or getattr(tensor, "ndim", 0) < 2:
+            return None
+        return int(tensor.shape[1])
+
+    def _infer_hidden_dim_from_state_dict(state_dict):
+        # Prefer explicit head input dimension if present.
+        if "head.weight" in state_dict:
+            w = state_dict["head.weight"]
+            if getattr(w, "ndim", 0) == 2 and int(w.shape[1]) > 0:
+                return int(w.shape[1])
+        # GAT stores per-head hidden in attention tensors.
+        if "convs.0.att_src" in state_dict:
+            t = state_dict["convs.0.att_src"]
+            if getattr(t, "ndim", 0) == 3 and int(t.shape[2]) > 0:
+                return int(t.shape[2])
+        # Fallback for GCN-like checkpoints.
+        if "convs.0.bias" in state_dict:
+            b = state_dict["convs.0.bias"]
+            if getattr(b, "ndim", 0) == 1 and int(b.shape[0]) > 0:
+                return int(b.shape[0])
+        return None
+
     requested_layers = int(config["model"].get("num_layers", 1))
+    requested_hidden_dim = int(config["model"].get("hidden_dim", 64))
     model_type = config["model"]["type"].lower()
     model_label = model_type
     if model_type == "tgcn":
@@ -604,6 +666,35 @@ def train_gnn(config):
     elif model_type == "tgat":
         print("[gnn] Warning: 'tgat' runs a static GAT baseline (no temporal attention). Use type 'tgat_static'.")
         model_label = "tgat_static"
+
+    requested_heads = int(config["model"].get("heads", 1))
+
+    if skip_training and checkpoint_to_load.exists():
+        try:
+            state_hint = torch.load(checkpoint_to_load, map_location="cpu")
+            inferred = _infer_num_layers_from_state_dict(state_hint)
+            if inferred is not None and inferred != requested_layers:
+                print(
+                    f"[gnn] using checkpoint-inferred num_layers={inferred} "
+                    f"(config requested {requested_layers})"
+                )
+                requested_layers = int(inferred)
+            inferred_heads = _infer_heads_from_state_dict(state_hint)
+            if inferred_heads is not None and inferred_heads != requested_heads:
+                print(
+                    f"[gnn] using checkpoint-inferred heads={inferred_heads} "
+                    f"(config requested {requested_heads})"
+                )
+                requested_heads = int(inferred_heads)
+            inferred_hidden = _infer_hidden_dim_from_state_dict(state_hint)
+            if inferred_hidden is not None and inferred_hidden != requested_hidden_dim:
+                print(
+                    f"[gnn] using checkpoint-inferred hidden_dim={inferred_hidden} "
+                    f"(config requested {requested_hidden_dim})"
+                )
+                requested_hidden_dim = int(inferred_hidden)
+        except Exception as exc:
+            print(f"[gnn] Warning: failed to infer num_layers from checkpoint: {exc}")
 
     num_layers = max(1, min(requested_layers, 3))
     if model_type == "gcn" and requested_layers > 2:
@@ -623,7 +714,7 @@ def train_gnn(config):
             raise RuntimeError("TGCN model support is unavailable (missing dependency).")
         model = StaticTGCN(
             input_dim=len(feat_cols),
-            hidden_dim=config["model"]["hidden_dim"],
+            hidden_dim=requested_hidden_dim,
             dropout=dropout_val,
         ).to(device)
     elif mtype == "tgat_static":
@@ -632,20 +723,20 @@ def train_gnn(config):
         # allow requesting more layers for TGAT-like model
         model = StaticTGAT(
             input_dim=len(feat_cols),
-            hidden_dim=config["model"]["hidden_dim"],
+            hidden_dim=requested_hidden_dim,
             num_layers=int(config["model"].get("num_layers", 2)),
-            heads=int(config["model"].get("heads", 2)),
+            heads=requested_heads,
             dropout=dropout_val,
         ).to(device)
     else:
         model = StaticGNN(
             gnn_type=model_type,
             input_dim=len(feat_cols),
-            hidden_dim=config["model"]["hidden_dim"],
+            hidden_dim=requested_hidden_dim,
             num_layers=num_layers,
             dropout=dropout_val,
             attn_dropout=attn_dropout_val,
-            heads=config["model"].get("heads", 1),
+            heads=requested_heads,
             use_residual=True,
         ).to(device)
 
@@ -672,69 +763,78 @@ def train_gnn(config):
     bad_epochs = 0
     patience = config["training"]["patience"]
 
-    out_dirs = resolve_output_dirs(config, model_type=config["model"]["type"])
-    out_dir = out_dirs.canonical
-    out_dir.mkdir(parents=True, exist_ok=True)
-    model_path = out_dir / f"best_{config['model']['type']}.pt"
-
     max_epochs = config["training"]["max_epochs"]
     tgt_mean_t = torch.tensor(tgt_mean, device=device)
     tgt_std_t = torch.tensor(tgt_std, device=device)
 
-    train_start = time.time()
-    for epoch in range(max_epochs):
-        model.train()
-        train_losses = []
-        t0 = time.time()
-        for batch in train_loader:
-            batch = batch.to(device, non_blocking=True)
-            optimizer.zero_grad()
-            with amp.autocast(device_type="cuda", enabled=use_cuda):
-                logits = model(batch.x, batch.edge_index, batch.edge_weight)
-                mask = batch.valid_mask & torch.isfinite(batch.y)
-                if mask.sum() == 0:
-                    continue
-                target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
-                loss = loss_fn(logits[mask], target_scaled[mask])
-            scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config["training"]["gradient_clip"])
-            scaler.step(optimizer)
-            scaler.update()
-            train_losses.append(loss.detach())
-        compute_time = time.time() - t0
-
-        model.eval()
-        val_losses = []
-        with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
-            for batch in val_loader:
+    if skip_training:
+        if not model_path.exists() and legacy_model_path is not None and legacy_model_path.exists():
+            checkpoint_to_load = legacy_model_path
+        if not checkpoint_to_load.exists():
+            raise RuntimeError(
+                "skip_training_if_checkpoint=true but no checkpoint found. "
+                f"Tried '{model_path}'"
+                + (f" and '{legacy_model_path}'" if legacy_model_path is not None else "")
+            )
+        print(f"[gnn] skipping training and loading checkpoint: {checkpoint_to_load}")
+        train_seconds = 0.0
+    else:
+        train_start = time.time()
+        for epoch in range(max_epochs):
+            model.train()
+            train_losses = []
+            t0 = time.time()
+            for batch in train_loader:
                 batch = batch.to(device, non_blocking=True)
-                logits = model(batch.x, batch.edge_index, batch.edge_weight)
-                mask = batch.valid_mask & torch.isfinite(batch.y)
-                if mask.sum() == 0:
-                    continue
-                target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
-                loss = loss_fn(logits[mask], target_scaled[mask])
-                val_losses.append(loss.detach())
+                optimizer.zero_grad()
+                with amp.autocast(device_type="cuda", enabled=use_cuda):
+                    logits = model(batch.x, batch.edge_index, batch.edge_weight)
+                    mask = batch.valid_mask & torch.isfinite(batch.y)
+                    if mask.sum() == 0:
+                        continue
+                    target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                    loss = loss_fn(logits[mask], target_scaled[mask])
+                scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config["training"]["gradient_clip"])
+                scaler.step(optimizer)
+                scaler.update()
+                train_losses.append(loss.detach())
+            compute_time = time.time() - t0
 
-        mean_train = float(torch.stack(train_losses).mean().item()) if train_losses else float("nan")
-        mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("nan")
-        print(f"[{config['model']['type'].upper()}] epoch {epoch} train {mean_train:.5f} val {mean_val:.5f} (compute {compute_time:.2f}s)")
+            model.eval()
+            val_losses = []
+            with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
+                for batch in val_loader:
+                    batch = batch.to(device, non_blocking=True)
+                    logits = model(batch.x, batch.edge_index, batch.edge_weight)
+                    mask = batch.valid_mask & torch.isfinite(batch.y)
+                    if mask.sum() == 0:
+                        continue
+                    target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                    loss = loss_fn(logits[mask], target_scaled[mask])
+                    val_losses.append(loss.detach())
 
-        if np.isfinite(mean_val) and mean_val < best_val:
-            best_val = mean_val
-            bad_epochs = 0
-            torch.save(model.state_dict(), model_path)
-        else:
-            bad_epochs += 1
-            if bad_epochs >= patience:
-                print("Early stopping")
-                break
-    train_seconds = time.time() - train_start
+            mean_train = float(torch.stack(train_losses).mean().item()) if train_losses else float("nan")
+            mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("nan")
+            print(f"[{config['model']['type'].upper()}] epoch {epoch} train {mean_train:.5f} val {mean_val:.5f} (compute {compute_time:.2f}s)")
 
-    if not model_path.exists():
-        raise RuntimeError(f"No checkpoint saved to '{model_path}'. Validation never produced a usable batch.")
+            if np.isfinite(mean_val) and mean_val < best_val:
+                best_val = mean_val
+                bad_epochs = 0
+                torch.save(model.state_dict(), model_path)
+            else:
+                bad_epochs += 1
+                if bad_epochs >= patience:
+                    print("Early stopping")
+                    break
+        train_seconds = time.time() - train_start
 
-    model.load_state_dict(torch.load(model_path, map_location=device))
+        if not model_path.exists():
+            raise RuntimeError(f"No checkpoint saved to '{model_path}'. Validation never produced a usable batch.")
+
+        checkpoint_to_load = model_path
+
+    model.load_state_dict(torch.load(checkpoint_to_load, map_location=device))
     model.eval()
 
     rows = []
@@ -792,7 +892,7 @@ def train_gnn(config):
                             "realized_ret": float(y_ret[i]),
                         }
                     )
-                if end_i > start_i:
+                if debug and end_i > start_i:
                     day_pred = pred[start_i:end_i]
                     print(
                         f"[{config['model']['type'].upper()}] test day {d.date()} pred mean {float(np.mean(day_pred)):.6f} std {float(np.std(day_pred)):.6f}"

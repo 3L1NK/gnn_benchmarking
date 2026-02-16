@@ -1,0 +1,71 @@
+path,issue,details
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gat/gat_predictions.csv,duplicate_pairs,"40064 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gat_corr_only/gat/gat_predictions.csv,duplicate_pairs,"40192 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gat_granger_only/gat/gat_predictions.csv,duplicate_pairs,"40192 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gat_sector_only/gat/gat_predictions.csv,duplicate_pairs,"40192 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gcn/gcn_predictions.csv,duplicate_pairs,"40064 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gcn_corr_granger/gcn/gcn_predictions.csv,duplicate_pairs,"40192 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gcn_corr_only/gcn/gcn_predictions.csv,duplicate_pairs,"40192 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gcn_corr_sector_granger/gcn/gcn_predictions.csv,duplicate_pairs,"40192 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gcn_granger_only/gcn/gcn_predictions.csv,duplicate_pairs,"40192 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"
+/Users/ericrusli/Documents/GitHub/gnn_benchmarking/experiments/gcn_sector_only/gcn/gcn_predictions.csv,duplicate_pairs,"40192 duplicate rows by (date,ticker). Sample:
+      date ticker
+2020-01-02   AAPL
+2020-01-02   AMZN
+2020-01-02    BAC
+2020-01-02      C
+2020-01-02    CAT"

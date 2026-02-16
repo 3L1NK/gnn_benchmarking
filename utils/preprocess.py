@@ -12,11 +12,13 @@ def load_raw_file():
     Load whichever raw file exists.
     The script checks in this order:
     1. raw_tidy.parquet (already tidy)
-    2. raw_yfinance_full.parquet (Yahoo MultiIndex)
+    2. raw_yfinance_full.parquet (Yahoo MultiIndex; canonical name)
+    3. raw_yfinance.parquet (legacy Yahoo MultiIndex name)
     """
 
     tidy_path = Path("data/raw/raw_tidy.parquet")
     full_path = Path("data/raw/raw_yfinance_full.parquet")
+    legacy_full_path = Path("data/raw/raw_yfinance.parquet")
 
     if tidy_path.exists():
         print("Loading tidy raw file:", tidy_path)
@@ -24,9 +26,10 @@ def load_raw_file():
         df["date"] = pd.to_datetime(df["date"])
         return df
 
-    elif full_path.exists():
-        print("Loading MultiIndex raw file:", full_path)
-        df_raw = pd.read_parquet(full_path)
+    elif full_path.exists() or legacy_full_path.exists():
+        source_path = full_path if full_path.exists() else legacy_full_path
+        print("Loading MultiIndex raw file:", source_path)
+        df_raw = pd.read_parquet(source_path)
 
         # Yahoo format: columns like ('Close', 'AAPL'), ('Volume','MSFT')
         # Convert to tidy
@@ -54,7 +57,10 @@ def load_raw_file():
         return df
 
     else:
-        raise FileNotFoundError("No raw file found in data/raw/")
+        raise FileNotFoundError(
+            "No raw file found in data/raw/. Expected one of: "
+            "raw_tidy.parquet, raw_yfinance_full.parquet, raw_yfinance.parquet"
+        )
 
 
 def main():

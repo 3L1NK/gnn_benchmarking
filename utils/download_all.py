@@ -40,7 +40,7 @@ def download_chunked(tickers, start, end, out_path):
     • tickers: List of ticker symbols to download.
     • start: Start date for historical data. Example: "2000-01-01".
     • end: End date for historical data. Example: "2024-12-31".
-    • out_path: Path for the final Parquet file. Example: "data/raw/raw_yfinance.parquet".
+    • out_path: Path for the final Parquet file. Example: "data/raw/raw_yfinance_full.parquet".
     
     Return: Merged DataFrame of all downloaded data.
     """
@@ -72,11 +72,12 @@ def download_chunked(tickers, start, end, out_path):
     print("Saved merged raw data:", out_path)
     return df
 
-# download all tickers and save to Parquet for the last 25 years
+# Download all tickers and save to Parquet for the last 25 years.
+# Keep filename aligned with utils/preprocess.py canonical input.
 if __name__ == "__main__":
     download_chunked(
         tickers,
         start="2000-01-01",
         end="2024-12-31",
-        out_path="data/raw/raw_yfinance.parquet"
+        out_path="data/raw/raw_yfinance_full.parquet"
     )

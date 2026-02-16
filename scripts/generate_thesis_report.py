@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from utils.prediction_audit import assert_no_prediction_artifact_issues
 
 
 KEY_METRICS = [
@@ -448,7 +455,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate thesis-ready benchmark tables and plots.")
     parser.add_argument("--results", type=str, default="results/results.jsonl")
     parser.add_argument("--out", type=str, default="results/reports/thesis")
+    parser.add_argument(
+        "--prediction-root",
+        action="append",
+        default=["experiments"],
+        help="Prediction artifact root to audit before report generation. Can be repeated.",
+    )
+    parser.add_argument(
+        "--skip-prediction-audit",
+        action="store_true",
+        help="Skip fail-fast audit for duplicate (date,ticker) prediction rows.",
+    )
     args = parser.parse_args()
+
+    if not args.skip_prediction_audit:
+        files = assert_no_prediction_artifact_issues(args.prediction_root)
+        print(f"[report] prediction audit passed across {len(files)} file(s)")
 
     generate_reports(Path(args.results), Path(args.out))
     print(f"[report] wrote thesis artifacts to {Path(args.out).resolve()}")
