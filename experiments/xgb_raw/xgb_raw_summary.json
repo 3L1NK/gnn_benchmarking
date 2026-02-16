@@ -2,18 +2,26 @@
   "run_tag": "xgb_raw",
   "model_type": "xgb_raw",
   "stats": {
-    "final_value": 1.9212984470376684,
-    "sharpe": 0.047547516489484486,
-    "sortino": 0.057494185351450434,
-    "avg_turnover": 0.13996815286624203
+    "final_value": 1.8333786280742694,
+    "cumulative_return": 0.8412798041790228,
+    "annualized_return": 0.13029764839830316,
+    "annualized_volatility": 0.2061335279330182,
+    "max_drawdown": -0.3312477892429402,
+    "sharpe": 0.04369001304853317,
+    "sortino": 0.051807216435351924,
+    "avg_turnover": 0.1392515923566879
   },
   "buy_and_hold_stats": {
-    "final_value": 4.866998453790327,
-    "sharpe": 0.07702448582198528,
-    "sortino": 0.10846150215335452
+    "final_value": 5.049288556044275,
+    "cumulative_return": 4.049288556044275,
+    "annualized_return": 0.3842240191009789,
+    "annualized_volatility": 0.3023422915663287,
+    "max_drawdown": -0.3471179958366627,
+    "sharpe": 0.07731121211800307,
+    "sortino": 0.10941253737924157
   },
-  "ic_mean": 0.010444577062719578,
-  "ic_tstat": 1.6940056466077291,
-  "volatility": 0.20017094039082517,
-  "max_drawdown": -0.3050075828196097
+  "ic_mean": 0.008801086458617024,
+  "ic_tstat": 1.1812761654602089,
+  "volatility": 0.20605145206755746,
+  "max_drawdown": -0.3312477892429402
 }
