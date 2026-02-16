@@ -1,29 +1,21 @@
 # trainers/train_xgboost.py
 from pathlib import Path
-import json
 import time
 
 import numpy as np
 import pandas as pd
 
-from utils.data_loading import load_price_panel
-from utils.features import add_technical_features
 from utils.graphs import rolling_corr_edges, graphical_lasso_precision, granger_edges
-from utils.metrics import rank_ic, hit_rate, sharpe_ratio
-from utils.backtest import backtest_long_short, backtest_buy_and_hold, backtest_long_only
-from utils.plot import (
-    plot_equity_curve,
-    plot_daily_ic,
-    plot_ic_hist,
-    plot_equity_comparison,
-)
 from utils.seeds import set_seed
 from utils.cache import cache_load, cache_save, cache_key, cache_path
 from utils.baseline import get_global_buy_and_hold
 from utils.targets import build_target
 from utils.preprocessing import scale_features
 from utils.splits import split_time
-from utils.results import build_experiment_result, save_experiment_result
+from utils.predictions import sanitize_predictions
+from utils.eval_runner import evaluate_and_report
+from utils.artifacts import resolve_output_dirs
+from trainers.common import DEFAULT_FEATURE_COLUMNS, prepare_panel
 from xgboost import XGBRegressor
 from itertools import product
 from sklearn.metrics import root_mean_squared_error
@@ -34,25 +26,8 @@ def _build_feature_panel(config):
 
     Features are assumed to be precomputed in the parquet produced by preprocessing.
     """
-    default_feat_cols = [
-        "ret_1d", "ret_5d", "ret_20d", "log_ret_1d",
-        "mom_3d", "mom_10", "mom_21d",
-        "vol_5d", "vol_20d", "vol_60d",
-        "drawdown_20d",
-        "volume_pct_change", "vol_z_5", "vol_z_20",
-        "rsi_14", "macd_line", "macd_signal", "macd_hist",
-    ]
-    price_file = config["data"]["price_file"]
-    start = config["data"]["start_date"]
-    end = config["data"]["end_date"]
-
-    df = load_price_panel(price_file, start, end)
-    feat_cols = [c for c in default_feat_cols if c in df.columns]
-
-    # Fallback: if the parquet is raw prices without features, compute them here.
-    if not feat_cols:
-        df, feat_cols = add_technical_features(df)
-        feat_cols = [c for c in default_feat_cols if c in df.columns]
+    df, feat_cols = prepare_panel(config, prefer_cached_feature_panel=True)
+    feat_cols = [c for c in DEFAULT_FEATURE_COLUMNS if c in df.columns] or feat_cols
 
     df, _ = build_target(df, config, target_col="target")
 
@@ -126,7 +101,8 @@ class XGBoostTrainer:
         self.df, self.feat_cols = _build_feature_panel(config)
         self.df["date"] = pd.to_datetime(self.df["date"])
 
-        self.out_dir = Path(config["evaluation"]["out_dir"])
+        self.out_dirs = resolve_output_dirs(config, model_type=config.get("model", {}).get("type", "xgboost"))
+        self.out_dir = self.out_dirs.canonical
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.rebuild_cache = config.get("cache", {}).get("rebuild", False)
 
@@ -155,12 +131,12 @@ class XGBoostTrainer:
         eq_bh_full, ret_bh_full, stats_bh = get_global_buy_and_hold(
             self.config,
             rebuild=self.rebuild_cache,
-            align_start_date=self.config["training"]["test_start"],
+            align_start_date=None,
         )
         self.bh_curve = eq_bh_full
         self.bh_ret = ret_bh_full
         self.bh_stats = stats_bh
-        print("[baseline] global buy-and-hold stats (aligned to test window)", stats_bh)
+        print("[baseline] global buy-and-hold stats", stats_bh)
 
         try:
             result = self._registry[key]()   # train the chosen XGB variant
@@ -170,125 +146,26 @@ class XGBoostTrainer:
         return result
 
     def _evaluate_and_backtest(self, pred_df, name: str, result_meta=None):
-        daily_metrics = []
-        for d, g in pred_df.groupby("date"):
-            ic = rank_ic(g["pred"], g["realized_ret"])
-            hit = hit_rate(g["pred"], g["realized_ret"], top_k=self.config["evaluation"]["top_k"])
-            daily_metrics.append({"date": d, "ic": ic, "hit": hit})
-
-        daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
-        
-        # IC time series plot
-        plot_daily_ic(
-            daily_metrics,
-            self.out_dir / f"{name}_ic_timeseries.png"
-        )
-
-        # IC histogram
-        plot_ic_hist(
-            daily_metrics,
-            self.out_dir / f"{name}_ic_histogram.png"
-        )
-
-        print(
-            f"[{name}] mean IC",
-            daily_metrics["ic"].mean(),
-            "mean hit",
-            daily_metrics["hit"].mean(),
-        )
-        if name == "xgb_node2vec":
-            print("[xgb_node2vec] Note: static embeddings provided no temporal signal; no improvement observed vs raw XGB is expected.")
-
-        equity_curve, daily_ret, stats = backtest_long_only(
-            pred_df,
-            top_k=self.config["evaluation"]["top_k"],
-            transaction_cost_bps=self.config["evaluation"]["transaction_cost_bps"],
-            risk_free_rate=self.config["evaluation"]["risk_free_rate"],
-        )
-        equity_curve = equity_curve.copy()
-        equity_curve.index = pd.to_datetime(equity_curve.index)
-        daily_ret_series = pd.Series(daily_ret, index=equity_curve.index[: len(daily_ret)])
-        dd = equity_curve / equity_curve.cummax() - 1.0
-        daily_metrics = daily_metrics.merge(
-            pd.DataFrame(
-                {
-                    "date": daily_ret_series.index,
-                    "daily_return": daily_ret_series.values,
-                    "drawdown": dd.reindex(daily_ret_series.index).values,
-                }
-            ),
-            on="date",
-            how="left",
-        )
-        daily_metrics.to_csv(self.out_dir / f"{name}_daily_metrics.csv", index=False)
-
-        equity_curve.to_csv(self.out_dir / f"{name}_equity_curve.csv", header=["value"])
-        plot_equity_curve(
-            equity_curve,
-            f"{name} long only",
-            self.out_dir / f"{name}_equity_curve.png",
-        )
-        print(f"[{name}] backtest stats", stats)
-        
-        # Align baseline to prediction window for plotting
-        start_d, end_d = pred_df["date"].min(), pred_df["date"].max()
-        bh_slice = self.bh_curve.loc[(self.bh_curve.index >= start_d) & (self.bh_curve.index <= end_d)]
-
-        plot_equity_comparison(
-            model_curve=equity_curve,
-            bh_curve=bh_slice,
-            title=f"{name}: Model vs Buy & Hold",
-            out_path=self.out_dir / f"{name}_vs_buy_and_hold.png",
-        )
-
-        # Summary + rolling metrics for thesis reporting
-        run_tag = self.config.get("experiment_name", name)
-        ic_series = daily_metrics.set_index("date")["ic"].dropna()
-        ic_mean = float(ic_series.mean()) if not ic_series.empty else float("nan")
-        ic_std = float(ic_series.std()) if not ic_series.empty else float("nan")
-        ic_tstat = float(ic_mean / (ic_std / np.sqrt(len(ic_series)))) if ic_series.size > 1 and ic_std > 0 else float("nan")
-        vol = float(np.std(daily_ret_series.values) * np.sqrt(252)) if not daily_ret_series.empty else float("nan")
-        max_dd = float(dd.min()) if not dd.empty else float("nan")
-
-        summary = {
-            "run_tag": run_tag,
-            "model_type": name,
-            "stats": stats,
-            "buy_and_hold_stats": self.bh_stats,
-            "ic_mean": ic_mean,
-            "ic_tstat": ic_tstat,
-            "volatility": vol,
-            "max_drawdown": max_dd,
-        }
-        summary_path = self.out_dir / f"{name}_summary.json"
-        with summary_path.open("w") as f:
-            json.dump(summary, f, indent=2)
-
         result_meta = result_meta or {}
-        results_path = Path(self.config.get("evaluation", {}).get("results_path", "results/results.jsonl"))
-        result = build_experiment_result(
-            self.config,
+        pred_df = sanitize_predictions(pred_df, strict_unique=True)
+        if name == "xgb_node2vec":
+            print("[xgb_node2vec] Note: static embeddings are a structural baseline; large temporal gains are not expected.")
+
+        summary = evaluate_and_report(
+            config=self.config,
+            pred_df=pred_df,
+            out_dirs=self.out_dirs,
+            run_name=name,
             model_name=name,
             model_family=self.config["model"]["family"],
             edge_type=result_meta.get("edge_type", "none"),
             directed=bool(result_meta.get("directed", False)),
             graph_window=result_meta.get("graph_window", ""),
-            pred_df=pred_df,
-            daily_metrics=daily_metrics,
-            stats=stats,
             train_seconds=float(result_meta.get("train_seconds", 0.0)),
             inference_seconds=float(result_meta.get("inference_seconds", 0.0)),
+            bh_full_curve=getattr(self, "bh_curve", None),
         )
-        save_experiment_result(result, results_path)
-
-        rolling_window = int(self.config.get("evaluation", {}).get("rolling_window", 63))
-        rolling = pd.DataFrame({"date": daily_metrics["date"]}).copy()
-        rolling["rolling_sharpe"] = daily_ret_series.rolling(rolling_window).apply(
-            lambda x: sharpe_ratio(x, self.config["evaluation"]["risk_free_rate"]) if len(x) > 1 else np.nan,
-            raw=False,
-        ).values
-        rolling["rolling_ic_mean"] = ic_series.reindex(daily_metrics["date"]).rolling(rolling_window).mean().values
-        rolling.to_csv(self.out_dir / f"{name}_rolling_metrics.csv", index=False)
+        print(f"[{name}] primary policy stats", summary.get("stats", {}))
     
     
     def train_xgb_raw(self):
@@ -869,7 +746,9 @@ class XGBoostTrainer:
             y_train_full = np.concatenate([y_train, y_val])
             model.fit(X_train_full, y_train_full, group=train_group_full, eval_set=[(X_val, y_val)], eval_group=[val_group], verbose=50)
         else:
-            model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=50)
+            X_train_full = np.concatenate([X_train, X_val])
+            y_train_full = np.concatenate([y_train, y_val])
+            model.fit(X_train_full, y_train_full, eval_set=[(X_val, y_val)], verbose=50)
         train_seconds = time.time() - train_start
 
         infer_start = time.time()
