@@ -23,6 +23,15 @@ RESULT_FIELDS = [
     "target_type",
     "target_horizon",
     "lookback_window",
+    "protocol_version",
+    "split_train_end",
+    "split_val_start",
+    "split_test_start",
+    "rebalance_freq",
+    "baseline_version",
+    "target_policy_hash",
+    "prediction_rows",
+    "prediction_unique_pairs",
     "prediction_rmse",
     "prediction_mae",
     "prediction_rank_ic",
@@ -35,6 +44,9 @@ RESULT_FIELDS = [
     "portfolio_turnover",
     "runtime_train_seconds",
     "runtime_inference_seconds",
+    "run_tag",
+    "out_dir",
+    "artifact_prefix",
 ]
 
 
@@ -91,16 +103,28 @@ def build_experiment_result(
     stats: dict,
     train_seconds: float,
     inference_seconds: float,
+    protocol_fields: Optional[dict] = None,
+    prediction_rows: Optional[int] = None,
+    prediction_unique_pairs: Optional[int] = None,
+    run_tag: Optional[str] = None,
+    out_dir: Optional[str] = None,
+    artifact_prefix: Optional[str] = None,
 ) -> dict:
     pm = prediction_metrics(pred_df, daily_metrics)
     data_cfg = config.get("data", {})
-    run_tag = config.get("experiment_name", model_name)
+    run_tag = run_tag or config.get("experiment_name", model_name)
     seed = int(config.get("seed", 42))
+    rebalance_for_id = ""
+    if protocol_fields and protocol_fields.get("rebalance_freq") is not None:
+        rebalance_for_id = f"_reb{int(protocol_fields.get('rebalance_freq'))}"
 
     result = {
-        "experiment_id": f"{run_tag}_{int(time.time())}",
+        "experiment_id": f"{run_tag}_{int(time.time())}{rebalance_for_id}",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
         "seed": seed,
+        "run_tag": run_tag,
+        "out_dir": str(out_dir or config.get("evaluation", {}).get("out_dir", "")),
+        "artifact_prefix": str(artifact_prefix or model_name),
         "model_name": model_name,
         "model_family": model_family,
         "edge_type": edge_type,
@@ -109,6 +133,21 @@ def build_experiment_result(
         "target_type": data_cfg.get("target_type", ""),
         "target_horizon": int(data_cfg.get("target_horizon", 0)) if data_cfg.get("target_horizon") is not None else 0,
         "lookback_window": int(data_cfg.get("lookback_window", 0)) if data_cfg.get("lookback_window") is not None else 0,
+        "protocol_version": "",
+        "split_train_end": "",
+        "split_val_start": str(config.get("training", {}).get("val_start", "")),
+        "split_test_start": str(config.get("training", {}).get("test_start", "")),
+        "rebalance_freq": 0,
+        "baseline_version": "",
+        "target_policy_hash": "",
+        "prediction_rows": int(prediction_rows) if prediction_rows is not None else (int(len(pred_df)) if pred_df is not None else 0),
+        "prediction_unique_pairs": int(prediction_unique_pairs)
+        if prediction_unique_pairs is not None
+        else (
+            int(pred_df.drop_duplicates(["date", "ticker"]).shape[0])
+            if pred_df is not None and not pred_df.empty and {"date", "ticker"}.issubset(pred_df.columns)
+            else 0
+        ),
         "prediction_rmse": pm["rmse"],
         "prediction_mae": pm["mae"],
         "prediction_rank_ic": pm["rank_ic"],
@@ -122,6 +161,17 @@ def build_experiment_result(
         "runtime_train_seconds": float(train_seconds),
         "runtime_inference_seconds": float(inference_seconds),
     }
+
+    if protocol_fields:
+        result.update({k: protocol_fields.get(k, result.get(k, "")) for k in [
+            "protocol_version",
+            "split_train_end",
+            "split_val_start",
+            "split_test_start",
+            "rebalance_freq",
+            "baseline_version",
+            "target_policy_hash",
+        ]})
 
     # Ensure all fields exist
     for key in RESULT_FIELDS:
