@@ -1,0 +1,74 @@
+experiment_name: gcn_granger_only_retune_medium
+
+data:
+  price_file: "data/processed/prices.parquet"
+  universe_file: "data/processed/universe.csv"
+  start_date: "2000-01-01"
+  end_date: "2024-12-31"
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  lookback_window: 250
+  corr_window: 60
+  corr_threshold: 0.4
+  min_history: 250
+
+graph:
+  use_corr: false
+  use_sector: false
+  use_granger: true
+  make_undirected: false
+  granger_maxlag: 5
+  granger_alpha: 0.01
+  granger_topk: 50
+
+model:
+  family: gnn
+  type: gcn
+  input_dim: 32
+  hidden_dim: 128
+  num_layers: 3
+  dropout: 0.1
+
+training:
+  device: "cuda"
+  batch_size: 16
+  lr: 0.0005
+  weight_decay: 1e-5
+  max_epochs: 60
+  gradient_clip: 1.0
+  patience: 8
+  val_start: "2016-01-01"
+  test_start: "2020-01-01"
+  num_workers: 4
+
+loss:
+  type: "mse"
+
+evaluation:
+  top_k: 20
+  transaction_cost_bps: 5
+  risk_free_rate: 0.0
+  backtest_policies: [1, 5]
+  primary_rebalance_freq: 1
+  results_path: "results/results_retune.jsonl"
+  out_dir: "experiments_retune/gcn_granger_only"
+
+tuning:
+  enabled: true
+  objective: "val_backtest_sharpe_annualized"
+  sample_mode: "random"
+  max_trials: 18
+  seed: 42
+  tune_max_epochs: 15
+  tune_patience: 4
+  param_grid:
+    hidden_dim: [64, 128, 192]
+    num_layers: [2, 3]
+    dropout: [0.1, 0.2]
+    lr: [0.0003, 0.0005, 0.001]
+    weight_decay: [1.0e-6, 1.0e-5, 5.0e-5]
+
+experiment:
+  protocol_version: "v1_thesis_core"
+  enforce_protocol: true

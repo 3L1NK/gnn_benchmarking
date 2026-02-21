@@ -4,14 +4,14 @@
   "protocol_version": "v1_thesis_core",
   "target_policy_hash": "92b426b26106",
   "stats": {
-    "final_value": 1.397584998242916,
-    "cumulative_return": 0.40624354547953767,
-    "annualized_return": 0.07079519695937475,
-    "annualized_volatility": 0.2107243679555985,
-    "max_drawdown": -0.3534758737463123,
-    "sharpe": 0.026751138173238886,
-    "sortino": 0.032165623316414566,
-    "avg_turnover": 0.5023089171974523
+    "final_value": 1.3133426991735668,
+    "cumulative_return": 0.3199863161061154,
+    "annualized_return": 0.057281618083008246,
+    "annualized_volatility": 0.21472074056219076,
+    "max_drawdown": -0.3351167347452564,
+    "sharpe": 0.022810253203185485,
+    "sortino": 0.02845830877926273,
+    "avg_turnover": 0.5433121019108281
   },
   "buy_and_hold_stats": {
     "final_value": 5.049288556044275,
@@ -31,21 +31,21 @@
     "sharpe": 0.048298077100140946,
     "sortino": 0.05875875777239032
   },
-  "ic_mean": -0.004801295890910616,
-  "ic_tstat": -0.6343393912253924,
-  "volatility": 0.21064046416252297,
-  "max_drawdown": -0.3534758737463123,
+  "ic_mean": -0.006618227227731019,
+  "ic_tstat": -0.8380932997548597,
+  "volatility": 0.2146352455396647,
+  "max_drawdown": -0.3351167347452564,
   "stats_by_rebalance_freq": {
     "1": {
       "stats": {
-        "final_value": 1.397584998242916,
-        "cumulative_return": 0.40624354547953767,
-        "annualized_return": 0.07079519695937475,
-        "annualized_volatility": 0.2107243679555985,
-        "max_drawdown": -0.3534758737463123,
-        "sharpe": 0.026751138173238886,
-        "sortino": 0.032165623316414566,
-        "avg_turnover": 0.5023089171974523
+        "final_value": 1.3133426991735668,
+        "cumulative_return": 0.3199863161061154,
+        "annualized_return": 0.057281618083008246,
+        "annualized_volatility": 0.21472074056219076,
+        "max_drawdown": -0.3351167347452564,
+        "sharpe": 0.022810253203185485,
+        "sortino": 0.02845830877926273,
+        "avg_turnover": 0.5433121019108281
       },
       "buy_and_hold_stats": {
         "final_value": 5.049288556044275,
@@ -65,22 +65,22 @@
         "sharpe": 0.048298077100140946,
         "sortino": 0.05875875777239032
       },
-      "ic_mean": -0.004801295890910616,
-      "ic_tstat": -0.6343393912253924,
-      "volatility": 0.21064046416252297,
-      "max_drawdown": -0.3534758737463123,
+      "ic_mean": -0.006618227227731019,
+      "ic_tstat": -0.8380932997548597,
+      "volatility": 0.2146352455396647,
+      "max_drawdown": -0.3351167347452564,
       "daily_metrics_path": "experiments/gat_corr_only/gat_daily_metrics_reb1.csv"
     },
     "5": {
       "stats": {
-        "final_value": 1.8140393421199024,
-        "cumulative_return": 0.8252779754428003,
-        "annualized_return": 0.12831991688461208,
-        "annualized_volatility": 0.20711931362508054,
-        "max_drawdown": -0.3368303348484354,
-        "sharpe": 0.04288110807970642,
-        "sortino": 0.052650175325801546,
-        "avg_turnover": 0.1476114649681529
+        "final_value": 1.5859755683865573,
+        "cumulative_return": 0.5939983138187828,
+        "annualized_return": 0.09806119663873059,
+        "annualized_volatility": 0.21953826892558412,
+        "max_drawdown": -0.35789717942719923,
+        "sharpe": 0.03348708250626212,
+        "sortino": 0.04054065391772121,
+        "avg_turnover": 0.13949044585987264
       },
       "buy_and_hold_stats": {
         "final_value": 5.049288556044275,
@@ -100,10 +100,10 @@
         "sharpe": 0.048298077100140946,
         "sortino": 0.05875875777239032
       },
-      "ic_mean": -0.004801295890910616,
-      "ic_tstat": -0.6343393912253924,
-      "volatility": 0.20703684525086757,
-      "max_drawdown": -0.3368303348484354,
+      "ic_mean": -0.006618227227731019,
+      "ic_tstat": -0.8380932997548597,
+      "volatility": 0.21945085571529996,
+      "max_drawdown": -0.35789717942719923,
       "daily_metrics_path": "experiments/gat_corr_only/gat_daily_metrics_reb5.csv"
     }
   },

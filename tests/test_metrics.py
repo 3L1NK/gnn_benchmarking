@@ -30,3 +30,10 @@ def test_portfolio_metrics_fields():
     assert "annualized_return" in stats
     assert "annualized_volatility" in stats
     assert "max_drawdown" in stats
+
+
+def test_sharpe_annualized_matches_daily_scaling():
+    eq = [1.0, 1.02, 1.01, 1.03]
+    r = [0.02, -0.00980392156862745, 0.019801980198019802]
+    stats = portfolio_metrics(eq, r, risk_free_rate=0.0, periods_per_year=252)
+    assert np.isclose(stats["sharpe_annualized"], stats["sharpe"] * np.sqrt(252.0))

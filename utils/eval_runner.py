@@ -11,6 +11,7 @@ from .artifacts import OutputDirs
 from .backtest import backtest_long_only
 from .baseline import (
     BASELINE_VERSION,
+    get_global_buy_and_hold,
     get_buy_and_hold_for_window,
     get_equal_weight_for_window,
     write_baseline_curve_csv,
@@ -86,13 +87,33 @@ def evaluate_and_report(
         plot_ic_hist(daily_metrics_ic, legacy_dir / f"{model_name}_ic_histogram.png")
 
     start_d, end_d = pred_df["date"].min(), pred_df["date"].max()
+    rebuild_cache = bool(config.get("cache", {}).get("rebuild", False))
+    eq_bh_global, _, stats_bh_global = get_global_buy_and_hold(
+        config,
+        rebuild=rebuild_cache,
+        align_start_date=None,
+    )
     eq_bh, _, stats_bh = get_buy_and_hold_for_window(
         config,
         start_date=start_d,
         end_date=end_d,
-        rebuild=config.get("cache", {}).get("rebuild", False),
-        eq_full=bh_full_curve,
+        rebuild=rebuild_cache,
+        eq_full=eq_bh_global if bh_full_curve is None else bh_full_curve,
     )
+
+    test_start_date = pd.to_datetime(eq_bh.index.min()).date() if not eq_bh.empty else None
+    test_end_date = pd.to_datetime(eq_bh.index.max()).date() if not eq_bh.empty else None
+    global_start_date = pd.to_datetime(eq_bh_global.index.min()).date() if not eq_bh_global.empty else None
+    global_end_date = pd.to_datetime(eq_bh_global.index.max()).date() if not eq_bh_global.empty else None
+
+    bh_test_final = float(stats_bh.get("final_value", float("nan")))
+    bh_test_cum_pct = float(stats_bh.get("cumulative_return", float("nan"))) * 100.0
+    bh_global_final = float(stats_bh_global.get("final_value", float("nan")))
+    print(
+        f"[baseline] BH(test rebased): {bh_test_final:.3f}x ({bh_test_cum_pct:+.1f}%) "
+        f"[{test_start_date}..{test_end_date}]"
+    )
+    print(f"[baseline] BH(global): {bh_global_final:.3f}x [{global_start_date}..{global_end_date}]")
 
     # Buy-and-hold curve is policy-independent.
     write_baseline_curve_csv(eq_bh, out_dir / "buy_and_hold_equity_curve.csv", "buy_and_hold")
@@ -159,10 +180,25 @@ def evaluate_and_report(
 
         comp_bh = out_dir / f"{run_name}_vs_buy_and_hold_reb{freq}.png"
         comp_eqw = out_dir / f"{run_name}_vs_equal_weight_reb{freq}.png"
-        plot_equity_comparison(eq_series, eq_bh, f"{run_name} vs Buy and Hold (reb={freq})", comp_bh)
+        bh_window_subtitle = f"test window: {test_start_date}..{test_end_date}"
+        plot_equity_comparison(
+            eq_series,
+            eq_bh,
+            f"{run_name} vs buy_and_hold (test rebased) (reb={freq})",
+            comp_bh,
+            bh_label="buy_and_hold (test rebased)",
+            subtitle=bh_window_subtitle,
+        )
         plot_equity_comparison(eq_series, eq_eqw, f"{run_name} vs Equal Weight (reb={freq})", comp_eqw)
         if legacy_dir is not None:
-            plot_equity_comparison(eq_series, eq_bh, f"{model_name.upper()} vs Buy and Hold (reb={freq})", legacy_dir / f"{model_name}_vs_buy_and_hold_reb{freq}.png")
+            plot_equity_comparison(
+                eq_series,
+                eq_bh,
+                f"{model_name.upper()} vs buy_and_hold (test rebased) (reb={freq})",
+                legacy_dir / f"{model_name}_vs_buy_and_hold_reb{freq}.png",
+                bh_label="buy_and_hold (test rebased)",
+                subtitle=bh_window_subtitle,
+            )
             plot_equity_comparison(eq_series, eq_eqw, f"{model_name.upper()} vs Equal Weight (reb={freq})", legacy_dir / f"{model_name}_vs_equal_weight_reb{freq}.png")
 
         ic_series = metrics.set_index("date")["ic"].dropna()
@@ -185,16 +221,38 @@ def evaluate_and_report(
                 legacy_dir / f"{model_name}_equity_curve.csv" if legacy_dir is not None else None,
             )
             plot_equity_curve(eq_series, f"{run_name} long only", out_dir / f"{run_name}_equity_curve.png")
-            plot_equity_curve(eq_bh, "Buy and Hold", out_dir / f"{run_name}_buy_and_hold_equity_curve.png")
+            plot_equity_curve(
+                eq_bh,
+                f"buy_and_hold (test rebased)\n{bh_window_subtitle}",
+                out_dir / f"{run_name}_buy_and_hold_equity_curve.png",
+            )
             write_baseline_curve_csv(eq_eqw, out_dir / "equal_weight_equity_curve.csv", "equal_weight")
-            plot_equity_comparison(eq_series, eq_bh, f"{run_name}: Model vs Buy & Hold", out_dir / f"{run_name}_vs_buy_and_hold.png")
+            plot_equity_comparison(
+                eq_series,
+                eq_bh,
+                f"{run_name}: Model vs buy_and_hold (test rebased)",
+                out_dir / f"{run_name}_vs_buy_and_hold.png",
+                bh_label="buy_and_hold (test rebased)",
+                subtitle=bh_window_subtitle,
+            )
             rolling.to_csv(out_dir / f"{run_name}_rolling_metrics.csv", index=False)
             if legacy_dir is not None:
                 metrics.to_csv(legacy_dir / f"{model_name}_daily_metrics.csv", index=False)
                 plot_equity_curve(eq_series, f"{model_name.upper()} long only", legacy_dir / f"{model_name}_equity_curve.png")
-                plot_equity_curve(eq_bh, "Buy and Hold", legacy_dir / f"{model_name}_buy_and_hold_equity_curve.png")
+                plot_equity_curve(
+                    eq_bh,
+                    f"buy_and_hold (test rebased)\n{bh_window_subtitle}",
+                    legacy_dir / f"{model_name}_buy_and_hold_equity_curve.png",
+                )
                 write_baseline_curve_csv(eq_eqw, legacy_dir / "equal_weight_equity_curve.csv", "equal_weight")
-                plot_equity_comparison(eq_series, eq_bh, f"{model_name.upper()} vs Buy and Hold", legacy_dir / f"{model_name}_equity_comparison.png")
+                plot_equity_comparison(
+                    eq_series,
+                    eq_bh,
+                    f"{model_name.upper()} vs buy_and_hold (test rebased)",
+                    legacy_dir / f"{model_name}_equity_comparison.png",
+                    bh_label="buy_and_hold (test rebased)",
+                    subtitle=bh_window_subtitle,
+                )
                 rolling.to_csv(legacy_dir / f"{model_name}_rolling_metrics.csv", index=False)
 
         ic_mean = float(ic_series.mean()) if not ic_series.empty else float("nan")
@@ -251,6 +309,19 @@ def evaluate_and_report(
         "stats_by_rebalance_freq": {str(k): v for k, v in stats_by_freq.items()},
         "prediction_rows": pred_stats["prediction_rows"],
         "prediction_unique_pairs": pred_stats["prediction_unique_pairs"],
+        "baseline_context": {
+            "global_buy_and_hold": {
+                "start_date": str(global_start_date) if global_start_date is not None else "",
+                "end_date": str(global_end_date) if global_end_date is not None else "",
+                "final_value": bh_global_final,
+            },
+            "test_window_buy_and_hold": {
+                "start_date": str(test_start_date) if test_start_date is not None else "",
+                "end_date": str(test_end_date) if test_end_date is not None else "",
+                "final_value": bh_test_final,
+                "rebased": True,
+            },
+        },
     }
     if extra_summary:
         summary.update(extra_summary)

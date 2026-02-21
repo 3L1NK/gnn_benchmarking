@@ -5,6 +5,12 @@ It includes the data preprocessing, graph construction, feature embedding (Node2
 
 ---
 
+## Thesis Guide
+
+For the full technical documentation (pipeline internals, artifact map, thesis-question mapping, baseline `5.x` vs `51.x` explanation, retune workflow, and change audit), use:
+
+- `docs/THESIS_README.md`
+
 ## 📂 Project Structure
 
 

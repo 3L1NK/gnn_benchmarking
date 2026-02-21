@@ -12,13 +12,12 @@ from utils.baseline import get_global_buy_and_hold
 from utils.targets import build_target
 from utils.preprocessing import scale_features
 from utils.splits import split_time
+from utils.tuning import enumerate_param_candidates, score_prediction_objective
 from utils.predictions import sanitize_predictions
 from utils.eval_runner import evaluate_and_report
 from utils.artifacts import resolve_output_dirs
 from trainers.common import DEFAULT_FEATURE_COLUMNS, prepare_panel
 from xgboost import XGBRegressor
-from itertools import product
-from sklearn.metrics import root_mean_squared_error
 
 
 def _build_feature_panel(config):
@@ -248,6 +247,10 @@ class XGBoostTrainer:
         print("XGB tuning enabled:", use_tuning)
         fixed_params = model_cfg.get("params", {})
         param_grid = tuning_cfg.get("param_grid", {})
+        tuning_objective = str(tuning_cfg.get("objective", "val_rmse"))
+        sample_mode = str(tuning_cfg.get("sample_mode", "grid"))
+        max_trials = int(tuning_cfg.get("max_trials", 0) or 0)
+        tuning_seed = int(tuning_cfg.get("seed", self.config.get("seed", 42)))
 
         # support ranking objectives via XGBRanker when configured
         obj = model_cfg.get("objective", "reg:squarederror")
@@ -278,23 +281,24 @@ class XGBoostTrainer:
         # 4. Hyperparameter logic
         # -----------------------
         if use_tuning:
+            candidates = enumerate_param_candidates(
+                fixed_params=fixed_params,
+                param_grid=param_grid,
+                sample_mode=sample_mode,
+                max_trials=max_trials,
+                seed=tuning_seed,
+            )
             if not param_grid:
-                print("No param_grid provided in config.tuning.param_grid; using fixed params only")
-                param_grid = {}
-
-            print("Starting XGB hyperparameter search from YAML param_grid")
-
+                print("No tuning.param_grid provided; evaluating fixed params only")
+            print(
+                f"Starting XGB hyperparameter search: objective={tuning_objective} "
+                f"sample_mode={sample_mode} candidates={len(candidates)}"
+            )
             best_params = None
-            best_rmse = float("inf")
-
-            if not param_grid:
-                candidates = [fixed_params]
-            else:
-                candidates = []
-                keys = list(param_grid.keys())
-                for values in product(*param_grid.values()):
-                    overrides = dict(zip(keys, values))
-                    candidates.append({**fixed_params, **overrides})
+            best_score = float("-inf")
+            eval_cfg = self.config.get("evaluation", {})
+            val_dates = self.df.loc[val_mask, "date"].to_numpy()
+            val_tickers = self.df.loc[val_mask, "ticker"].to_numpy()
 
             for params in candidates:
                 model = make_model(params)
@@ -306,15 +310,28 @@ class XGBoostTrainer:
                     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
                 preds = model.predict(X_val)
-                rmse = root_mean_squared_error(y_val, preds)
+                score_payload = score_prediction_objective(
+                    objective=tuning_objective,
+                    y_true=y_val,
+                    preds=preds,
+                    dates=val_dates,
+                    tickers=val_tickers,
+                    top_k=int(eval_cfg.get("top_k", 20)),
+                    transaction_cost_bps=float(eval_cfg.get("transaction_cost_bps", 5.0)),
+                    risk_free_rate=float(eval_cfg.get("risk_free_rate", 0.0)),
+                    rebalance_freq=int(eval_cfg.get("primary_rebalance_freq", 1)),
+                )
 
-                print("Params", params, "RMSE", rmse)
+                metric_name = score_payload["metric_name"]
+                metric_value = score_payload["metric_value"]
+                score = score_payload["score"]
+                print("Params", params, metric_name, metric_value, "score", score)
 
-                if rmse < best_rmse:
-                    best_rmse = rmse
+                if score > best_score:
+                    best_score = score
                     best_params = params
 
-            print("Best parameters:", best_params)
+            print("Best parameters:", best_params, "best_score", best_score)
 
         else:
             print("Using fixed XGB parameters from YAML")
@@ -686,6 +703,10 @@ class XGBoostTrainer:
             "colsample_bytree": 0.8,
         })
         param_grid = tuning_cfg.get("param_grid", {})
+        tuning_objective = str(tuning_cfg.get("objective", "val_rmse"))
+        sample_mode = str(tuning_cfg.get("sample_mode", "grid"))
+        max_trials = int(tuning_cfg.get("max_trials", 0) or 0)
+        tuning_seed = int(tuning_cfg.get("seed", self.config.get("seed", 42)))
 
         obj = model_cfg.get("objective", "reg:squarederror")
         is_rank = isinstance(obj, str) and obj.startswith("rank")
@@ -708,16 +729,23 @@ class XGBoostTrainer:
                     **params,
                 )
 
-        if use_tuning and param_grid:
-            print("XGB Node2Vec tuning enabled")
+        if use_tuning:
+            candidates = enumerate_param_candidates(
+                fixed_params=fixed_params,
+                param_grid=param_grid,
+                sample_mode=sample_mode,
+                max_trials=max_trials,
+                seed=tuning_seed,
+            )
+            eval_cfg = self.config.get("evaluation", {})
+            val_dates = tab.loc[val_mask, "date"].to_numpy()
+            val_tickers = tab.loc[val_mask, "ticker"].to_numpy()
+            print(
+                f"XGB Node2Vec tuning enabled: objective={tuning_objective} "
+                f"sample_mode={sample_mode} candidates={len(candidates)}"
+            )
             best_params = None
-            best_rmse = float("inf")
-            keys = list(param_grid.keys())
-            candidates = []
-            from itertools import product
-            for values in product(*param_grid.values()):
-                overrides = dict(zip(keys, values))
-                candidates.append({**fixed_params, **overrides})
+            best_score = float("-inf")
             for params in candidates:
                 mdl = make_model(params)
                 if is_rank:
@@ -728,12 +756,25 @@ class XGBoostTrainer:
                     mdl.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
                 preds = mdl.predict(X_val)
-                rmse = root_mean_squared_error(y_val, preds)
-                print("Params", params, "RMSE", rmse)
-                if rmse < best_rmse:
-                    best_rmse = rmse
+                score_payload = score_prediction_objective(
+                    objective=tuning_objective,
+                    y_true=y_val,
+                    preds=preds,
+                    dates=val_dates,
+                    tickers=val_tickers,
+                    top_k=int(eval_cfg.get("top_k", 20)),
+                    transaction_cost_bps=float(eval_cfg.get("transaction_cost_bps", 5.0)),
+                    risk_free_rate=float(eval_cfg.get("risk_free_rate", 0.0)),
+                    rebalance_freq=int(eval_cfg.get("primary_rebalance_freq", 1)),
+                )
+                metric_name = score_payload["metric_name"]
+                metric_value = score_payload["metric_value"]
+                score = score_payload["score"]
+                print("Params", params, metric_name, metric_value, "score", score)
+                if score > best_score:
+                    best_score = score
                     best_params = params
-            print("Best XGB Node2Vec params:", best_params)
+            print("Best XGB Node2Vec params:", best_params, "best_score", best_score)
         else:
             best_params = fixed_params
 

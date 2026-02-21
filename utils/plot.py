@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from pathlib import Path
@@ -117,7 +119,15 @@ def plot_ic_hist(ic_df, out_path: Path):
 # 4.  EQUITY CURVE COMPARISON PLOT
 # ============================================================
 
-def plot_equity_comparison(model_curve, bh_curve, title, out_path: Path, use_log_scale=False):
+def plot_equity_comparison(
+    model_curve,
+    bh_curve,
+    title,
+    out_path: Path,
+    use_log_scale=False,
+    bh_label: str = "Buy & Hold",
+    subtitle: str | None = None,
+):
     """
     Plot model vs buy-and-hold equity curves on the same chart.
     """
@@ -137,13 +147,16 @@ def plot_equity_comparison(model_curve, bh_curve, title, out_path: Path, use_log
     plt.plot(
         bh_curve.index,
         bh_curve.values,
-        label="Buy & Hold",
+        label=bh_label,
         linewidth=2,
         color="orange",
         alpha=0.9,
     )
 
-    plt.title(title, fontsize=14)
+    if subtitle:
+        plt.title(f"{title}\n{subtitle}", fontsize=13)
+    else:
+        plt.title(title, fontsize=14)
     plt.xlabel("Date")
     plt.ylabel("Portfolio Value")
 

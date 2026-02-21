@@ -1,0 +1,112 @@
+{
+  "run_tag": "xgb_node2vec_corr",
+  "model_type": "xgb_node2vec",
+  "protocol_version": "v1_thesis_core",
+  "target_policy_hash": "92b426b26106",
+  "stats": {
+    "final_value": 1.538667396708434,
+    "cumulative_return": 0.5483395634890553,
+    "annualized_return": 0.09167703933213156,
+    "annualized_volatility": 0.20328185324856618,
+    "max_drawdown": -0.32067082495887167,
+    "sharpe": 0.03320122088006463,
+    "sortino": 0.04069553373233324,
+    "avg_turnover": 0.5863057324840765
+  },
+  "buy_and_hold_stats": {
+    "final_value": 5.049288556044275,
+    "cumulative_return": 4.049288556044275,
+    "annualized_return": 0.3842240191009789,
+    "annualized_volatility": 0.3023422915663287,
+    "max_drawdown": -0.3471179958366627,
+    "sharpe": 0.07731121211800307,
+    "sortino": 0.10941253737924157
+  },
+  "equal_weight_stats": {
+    "final_value": 2.0221621477103713,
+    "cumulative_return": 1.0221621477103713,
+    "annualized_return": 0.1518790337272664,
+    "annualized_volatility": 0.21458010018431448,
+    "max_drawdown": -0.3464553449053246,
+    "sharpe": 0.048298077100140946,
+    "sortino": 0.05875875777239032
+  },
+  "ic_mean": 0.013589118640618889,
+  "ic_tstat": 1.8930944372166647,
+  "volatility": 0.20320091282996888,
+  "max_drawdown": -0.32067082495887167,
+  "stats_by_rebalance_freq": {
+    "1": {
+      "stats": {
+        "final_value": 1.538667396708434,
+        "cumulative_return": 0.5483395634890553,
+        "annualized_return": 0.09167703933213156,
+        "annualized_volatility": 0.20328185324856618,
+        "max_drawdown": -0.32067082495887167,
+        "sharpe": 0.03320122088006463,
+        "sortino": 0.04069553373233324,
+        "avg_turnover": 0.5863057324840765
+      },
+      "buy_and_hold_stats": {
+        "final_value": 5.049288556044275,
+        "cumulative_return": 4.049288556044275,
+        "annualized_return": 0.3842240191009789,
+        "annualized_volatility": 0.3023422915663287,
+        "max_drawdown": -0.3471179958366627,
+        "sharpe": 0.07731121211800307,
+        "sortino": 0.10941253737924157
+      },
+      "equal_weight_stats": {
+        "final_value": 2.0221621477103713,
+        "cumulative_return": 1.0221621477103713,
+        "annualized_return": 0.1518790337272664,
+        "annualized_volatility": 0.21458010018431448,
+        "max_drawdown": -0.3464553449053246,
+        "sharpe": 0.048298077100140946,
+        "sortino": 0.05875875777239032
+      },
+      "ic_mean": 0.013589118640618889,
+      "ic_tstat": 1.8930944372166647,
+      "volatility": 0.20320091282996888,
+      "max_drawdown": -0.32067082495887167,
+      "daily_metrics_path": "experiments/xgb_node2vec_corr/xgb_node2vec_daily_metrics_reb1.csv"
+    },
+    "5": {
+      "stats": {
+        "final_value": 1.9482514478082698,
+        "cumulative_return": 0.9604982874918164,
+        "annualized_return": 0.14461521391512777,
+        "annualized_volatility": 0.20399663076218216,
+        "max_drawdown": -0.3192268967971098,
+        "sharpe": 0.04778113697660007,
+        "sortino": 0.05685406940278596,
+        "avg_turnover": 0.13949044585987264
+      },
+      "buy_and_hold_stats": {
+        "final_value": 5.049288556044275,
+        "cumulative_return": 4.049288556044275,
+        "annualized_return": 0.3842240191009789,
+        "annualized_volatility": 0.3023422915663287,
+        "max_drawdown": -0.3471179958366627,
+        "sharpe": 0.07731121211800307,
+        "sortino": 0.10941253737924157
+      },
+      "equal_weight_stats": {
+        "final_value": 2.0221621477103713,
+        "cumulative_return": 1.0221621477103713,
+        "annualized_return": 0.1518790337272664,
+        "annualized_volatility": 0.21458010018431448,
+        "max_drawdown": -0.3464553449053246,
+        "sharpe": 0.048298077100140946,
+        "sortino": 0.05875875777239032
+      },
+      "ic_mean": 0.013589118640618889,
+      "ic_tstat": 1.8930944372166647,
+      "volatility": 0.20391540574173656,
+      "max_drawdown": -0.3192268967971098,
+      "daily_metrics_path": "experiments/xgb_node2vec_corr/xgb_node2vec_daily_metrics_reb5.csv"
+    }
+  },
+  "prediction_rows": 40192,
+  "prediction_unique_pairs": 40192
+}

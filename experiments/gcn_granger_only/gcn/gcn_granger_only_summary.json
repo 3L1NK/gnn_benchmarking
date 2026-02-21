@@ -4,14 +4,14 @@
   "protocol_version": "v1_thesis_core",
   "target_policy_hash": "92b426b26106",
   "stats": {
-    "final_value": 1.4847002400478284,
-    "cumulative_return": 0.49353058186928545,
-    "annualized_return": 0.08381158356729279,
-    "annualized_volatility": 0.20784654159335306,
-    "max_drawdown": -0.32233761444528963,
-    "sharpe": 0.03058569842648959,
-    "sortino": 0.03850468810697532,
-    "avg_turnover": 0.47834394904458605
+    "final_value": 1.7376416965657788,
+    "cumulative_return": 0.7515146219160402,
+    "annualized_return": 0.11901985934974002,
+    "annualized_volatility": 0.20255771608201767,
+    "max_drawdown": -0.2926059878046381,
+    "sharpe": 0.04085833549231965,
+    "sortino": 0.0516564734241722,
+    "avg_turnover": 0.5936305732484076
   },
   "buy_and_hold_stats": {
     "final_value": 5.049288556044275,
@@ -31,21 +31,21 @@
     "sharpe": 0.048298077100140946,
     "sortino": 0.05875875777239032
   },
-  "ic_mean": 0.0016776465496555865,
-  "ic_tstat": 0.24381508471148108,
-  "volatility": 0.20776378365991371,
-  "max_drawdown": -0.32233761444528963,
+  "ic_mean": 0.016541811477636007,
+  "ic_tstat": 2.3292294147191717,
+  "volatility": 0.20247706399198703,
+  "max_drawdown": -0.2926059878046381,
   "stats_by_rebalance_freq": {
     "1": {
       "stats": {
-        "final_value": 1.4847002400478284,
-        "cumulative_return": 0.49353058186928545,
-        "annualized_return": 0.08381158356729279,
-        "annualized_volatility": 0.20784654159335306,
-        "max_drawdown": -0.32233761444528963,
-        "sharpe": 0.03058569842648959,
-        "sortino": 0.03850468810697532,
-        "avg_turnover": 0.47834394904458605
+        "final_value": 1.7376416965657788,
+        "cumulative_return": 0.7515146219160402,
+        "annualized_return": 0.11901985934974002,
+        "annualized_volatility": 0.20255771608201767,
+        "max_drawdown": -0.2926059878046381,
+        "sharpe": 0.04085833549231965,
+        "sortino": 0.0516564734241722,
+        "avg_turnover": 0.5936305732484076
       },
       "buy_and_hold_stats": {
         "final_value": 5.049288556044275,
@@ -65,22 +65,22 @@
         "sharpe": 0.048298077100140946,
         "sortino": 0.05875875777239032
       },
-      "ic_mean": 0.0016776465496555865,
-      "ic_tstat": 0.24381508471148108,
-      "volatility": 0.20776378365991371,
-      "max_drawdown": -0.32233761444528963,
+      "ic_mean": 0.016541811477636007,
+      "ic_tstat": 2.3292294147191717,
+      "volatility": 0.20247706399198703,
+      "max_drawdown": -0.2926059878046381,
       "daily_metrics_path": "experiments/gcn_granger_only/gcn_daily_metrics_reb1.csv"
     },
     "5": {
       "stats": {
-        "final_value": 1.7656274186125143,
-        "cumulative_return": 0.7761285913173717,
-        "annualized_return": 0.12215741095225541,
-        "annualized_volatility": 0.2068366784082081,
-        "max_drawdown": -0.33001959533732006,
-        "sharpe": 0.041272591359765215,
-        "sortino": 0.05106909569418178,
-        "avg_turnover": 0.13614649681528662
+        "final_value": 1.9866681111456956,
+        "cumulative_return": 1.0025292052113706,
+        "annualized_return": 0.14949704764489402,
+        "annualized_volatility": 0.21088089292231238,
+        "max_drawdown": -0.3187168360413871,
+        "sharpe": 0.047813468364030866,
+        "sortino": 0.05779096391108888,
+        "avg_turnover": 0.1456210191082803
       },
       "buy_and_hold_stats": {
         "final_value": 5.049288556044275,
@@ -100,10 +100,10 @@
         "sharpe": 0.048298077100140946,
         "sortino": 0.05875875777239032
       },
-      "ic_mean": 0.0016776465496555865,
-      "ic_tstat": 0.24381508471148108,
-      "volatility": 0.20675432257041884,
-      "max_drawdown": -0.33001959533732006,
+      "ic_mean": 0.016541811477636007,
+      "ic_tstat": 2.3292294147191717,
+      "volatility": 0.21079692680593484,
+      "max_drawdown": -0.3187168360413871,
       "daily_metrics_path": "experiments/gcn_granger_only/gcn_daily_metrics_reb5.csv"
     }
   },

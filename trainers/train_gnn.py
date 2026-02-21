@@ -33,6 +33,7 @@ from utils.results import edge_type_from_graph_cfg
 from utils.predictions import sanitize_predictions
 from utils.eval_runner import evaluate_and_report
 from utils.artifacts import resolve_output_dirs
+from utils.tuning import enumerate_param_candidates, score_prediction_objective
 
 
 def _build_snapshots_and_targets(config):
@@ -429,6 +430,65 @@ def _target_stats(snaps):
     return mean, std
 
 
+def _collect_prediction_rows(model, loader, *, device, tgt_mean_t, tgt_std_t, use_cuda):
+    rows = []
+    model.eval()
+    with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
+        for batch in loader:
+            batch = batch.to(device, non_blocking=True)
+            logits = model(batch.x, batch.edge_index, batch.edge_weight)
+            pred = (logits * tgt_std_t + tgt_mean_t).detach().cpu().numpy()
+            y_ret = batch.y.detach().cpu().numpy()
+            valid = batch.valid_mask.detach().cpu().numpy()
+
+            ptr = batch.ptr.detach().cpu().numpy() if hasattr(batch, "ptr") else np.array([0, len(pred)], dtype=int)
+            num_graphs = int(len(ptr) - 1)
+            data_list = batch.to_data_list() if hasattr(batch, "to_data_list") else []
+
+            for gidx in range(num_graphs):
+                start_i, end_i = int(ptr[gidx]), int(ptr[gidx + 1])
+                g_data = data_list[gidx] if gidx < len(data_list) else None
+
+                d = None
+                tlist = None
+                if g_data is not None:
+                    try:
+                        d = pd.to_datetime(getattr(g_data, "date"))
+                    except Exception:
+                        d = None
+                    tickers_attr = getattr(g_data, "tickers", None)
+                    if isinstance(tickers_attr, (list, tuple, np.ndarray, pd.Index)):
+                        tlist = [str(t) for t in list(tickers_attr)]
+
+                if d is None:
+                    date_obj = getattr(batch, "date", None)
+                    if isinstance(date_obj, (list, tuple, np.ndarray, pd.DatetimeIndex)) and len(date_obj) > gidx:
+                        d = pd.to_datetime(date_obj[gidx])
+                    else:
+                        d = pd.NaT
+
+                if tlist is None:
+                    tlist = [f"UNK_{k}" for k in range(end_i - start_i)]
+                if len(tlist) != (end_i - start_i):
+                    tlist = (tlist + [f"UNK_{k}" for k in range(end_i - start_i)])[: (end_i - start_i)]
+
+                for local_idx, t in enumerate(tlist):
+                    i = start_i + local_idx
+                    if i >= len(valid):
+                        break
+                    if not valid[i] or not np.isfinite(y_ret[i]):
+                        continue
+                    rows.append(
+                        {
+                            "date": d,
+                            "ticker": str(t),
+                            "pred": float(pred[i]),
+                            "realized_ret": float(y_ret[i]),
+                        }
+                    )
+    return rows
+
+
 def train_gnn(config):
     set_seed(42)
     device = get_device(config["training"]["device"])
@@ -658,6 +718,7 @@ def train_gnn(config):
 
     requested_layers = int(config["model"].get("num_layers", 1))
     requested_hidden_dim = int(config["model"].get("hidden_dim", 64))
+    requested_heads = int(config["model"].get("heads", 1))
     model_type = config["model"]["type"].lower()
     model_label = model_type
     if model_type == "tgcn":
@@ -667,7 +728,18 @@ def train_gnn(config):
         print("[gnn] Warning: 'tgat' runs a static GAT baseline (no temporal attention). Use type 'tgat_static'.")
         model_label = "tgat_static"
 
-    requested_heads = int(config["model"].get("heads", 1))
+    base_dropout = float(config["model"].get("dropout", 0.0))
+    if model_type == "gcn" and base_dropout <= 0.0:
+        print("[gnn] Warning: forcing non-zero dropout=0.2 for GCN to reduce oversmoothing")
+        base_dropout = 0.2
+    base_attn_dropout = float(config["model"].get("attn_dropout", base_dropout))
+    base_lr = float(config["training"].get("lr", 1e-3))
+    base_weight_decay = float(config["training"].get("weight_decay", 0.0))
+    base_gradient_clip = float(config["training"].get("gradient_clip", 1.0))
+    max_epochs = int(config["training"]["max_epochs"])
+    patience = int(config["training"]["patience"])
+    tgt_mean_t = torch.tensor(tgt_mean, device=device)
+    tgt_std_t = torch.tensor(tgt_std, device=device)
 
     if skip_training and checkpoint_to_load.exists():
         try:
@@ -696,61 +768,234 @@ def train_gnn(config):
         except Exception as exc:
             print(f"[gnn] Warning: failed to infer num_layers from checkpoint: {exc}")
 
-    num_layers = max(1, min(requested_layers, 3))
-    if model_type == "gcn" and requested_layers > 2:
-        print("[gnn] Warning: GCN depth >2 can over-smooth; clamping to at most 3 layers.")
+    def _build_model_instance(
+        *,
+        hidden_dim: int,
+        num_layers: int,
+        dropout: float,
+        attn_dropout: float,
+        heads: int,
+        emit_warnings: bool = True,
+    ):
+        local_num_layers = max(1, min(int(num_layers), 3))
+        if model_type == "gcn" and int(num_layers) > 2 and emit_warnings:
+            print("[gnn] Warning: GCN depth >2 can over-smooth; clamping to at most 3 layers.")
+        local_dropout = float(dropout)
+        if model_type == "gcn" and local_dropout <= 0.0:
+            if emit_warnings:
+                print("[gnn] Warning: forcing non-zero dropout=0.2 for GCN to reduce oversmoothing")
+            local_dropout = 0.2
+        local_attn_dropout = float(attn_dropout)
+        mtype = model_label
+        if mtype == "tgcn_static":
+            if StaticTGCN is None:
+                raise RuntimeError("TGCN model support is unavailable (missing dependency).")
+            mdl = StaticTGCN(
+                input_dim=len(feat_cols),
+                hidden_dim=int(hidden_dim),
+                dropout=local_dropout,
+            ).to(device)
+        elif mtype == "tgat_static":
+            if StaticTGAT is None:
+                raise RuntimeError("TGAT model support is unavailable (missing dependency).")
+            mdl = StaticTGAT(
+                input_dim=len(feat_cols),
+                hidden_dim=int(hidden_dim),
+                num_layers=int(num_layers),
+                heads=int(heads),
+                dropout=local_dropout,
+            ).to(device)
+        else:
+            mdl = StaticGNN(
+                gnn_type=model_type,
+                input_dim=len(feat_cols),
+                hidden_dim=int(hidden_dim),
+                num_layers=local_num_layers,
+                dropout=local_dropout,
+                attn_dropout=local_attn_dropout,
+                heads=int(heads),
+                use_residual=True,
+            ).to(device)
+        if emit_warnings:
+            try:
+                if model_type in {"gat", "tgat_static"} and (use_corr or use_sector or use_granger):
+                    print(
+                        "[gnn] Warning: model GAT ignores edge weights provided in `edge_weight`.\n"
+                        "If you rely on weighting, consider using GCN or implementing weighted attention."
+                    )
+            except Exception:
+                pass
+        return mdl
 
-    # Ensure dropout enabled and non-zero for GCN to reduce oversmoothing
-    dropout_val = float(config["model"].get("dropout", 0.0))
-    if model_type == "gcn" and dropout_val <= 0.0:
-        print("[gnn] Warning: forcing non-zero dropout=0.2 for GCN to reduce oversmoothing")
-        dropout_val = 0.2
-    attn_dropout_val = float(config["model"].get("attn_dropout", dropout_val))
+    tuning_cfg = config.get("tuning", {})
+    use_tuning = bool(tuning_cfg.get("enabled", False))
+    if skip_training and use_tuning:
+        print("[gnn] Warning: tuning.enabled ignored because skip_training_if_checkpoint=true")
+        use_tuning = False
 
-    # Allow TGCN/TGAT-style baselines in static (snapshot) mode.
-    mtype = model_label
-    if mtype == "tgcn_static":
-        if StaticTGCN is None:
-            raise RuntimeError("TGCN model support is unavailable (missing dependency).")
-        model = StaticTGCN(
-            input_dim=len(feat_cols),
-            hidden_dim=requested_hidden_dim,
-            dropout=dropout_val,
-        ).to(device)
-    elif mtype == "tgat_static":
-        if StaticTGAT is None:
-            raise RuntimeError("TGAT model support is unavailable (missing dependency).")
-        # allow requesting more layers for TGAT-like model
-        model = StaticTGAT(
-            input_dim=len(feat_cols),
-            hidden_dim=requested_hidden_dim,
-            num_layers=int(config["model"].get("num_layers", 2)),
-            heads=requested_heads,
-            dropout=dropout_val,
-        ).to(device)
-    else:
-        model = StaticGNN(
-            gnn_type=model_type,
-            input_dim=len(feat_cols),
-            hidden_dim=requested_hidden_dim,
-            num_layers=num_layers,
-            dropout=dropout_val,
-            attn_dropout=attn_dropout_val,
-            heads=requested_heads,
-            use_residual=True,
-        ).to(device)
+    selected_hidden_dim = int(requested_hidden_dim)
+    selected_layers = int(requested_layers)
+    selected_dropout = float(base_dropout)
+    selected_attn_dropout = float(base_attn_dropout)
+    selected_heads = int(requested_heads)
+    lr_val = float(base_lr)
+    weight_decay_val = float(base_weight_decay)
+    gradient_clip_val = float(base_gradient_clip)
 
-    # If using GAT with weighted edges enabled, warn that GATConv ignores edge_weight
-    try:
-        if model_type in {"gat", "tgat_static"} and (use_corr or use_sector or use_granger):
-            print("[gnn] Warning: model GAT ignores edge weights provided in `edge_weight`.\n" \
-                  "If you rely on weighting, consider using GCN or implementing weighted attention.")
-    except Exception:
-        pass
+    if use_tuning:
+        objective = str(tuning_cfg.get("objective", "val_rmse"))
+        sample_mode = str(tuning_cfg.get("sample_mode", "grid"))
+        max_trials = int(tuning_cfg.get("max_trials", 0) or 0)
+        tuning_seed = int(tuning_cfg.get("seed", config.get("seed", 42)))
+        tune_max_epochs = int(tuning_cfg.get("tune_max_epochs", min(15, max_epochs)))
+        tune_patience = int(tuning_cfg.get("tune_patience", max(2, min(6, patience))))
+        fixed_tune_params = {
+            "hidden_dim": selected_hidden_dim,
+            "num_layers": selected_layers,
+            "dropout": selected_dropout,
+            "attn_dropout": selected_attn_dropout,
+            "heads": selected_heads,
+            "lr": lr_val,
+            "weight_decay": weight_decay_val,
+            "gradient_clip": gradient_clip_val,
+        }
+        param_grid = tuning_cfg.get("param_grid", {})
+        candidates = enumerate_param_candidates(
+            fixed_params=fixed_tune_params,
+            param_grid=param_grid,
+            sample_mode=sample_mode,
+            max_trials=max_trials,
+            seed=tuning_seed,
+        )
+        print(
+            f"[gnn] tuning: objective={objective} sample_mode={sample_mode} "
+            f"candidates={len(candidates)}"
+        )
 
-    # Coerce hyperparams to numeric types to avoid YAML/string parsing issues
-    lr_val = float(config["training"].get("lr", 1e-3))
-    weight_decay_val = float(config["training"].get("weight_decay", 0.0))
+        best_score = float("-inf")
+        best_params = None
+        eval_cfg = config.get("evaluation", {})
+        for params in candidates:
+            cand_hidden = int(params.get("hidden_dim", selected_hidden_dim))
+            cand_layers = int(params.get("num_layers", selected_layers))
+            cand_dropout = float(params.get("dropout", selected_dropout))
+            cand_attn_dropout = float(params.get("attn_dropout", cand_dropout))
+            cand_heads = int(params.get("heads", selected_heads))
+            cand_lr = float(params.get("lr", lr_val))
+            cand_wd = float(params.get("weight_decay", weight_decay_val))
+            cand_clip = float(params.get("gradient_clip", gradient_clip_val))
+
+            tune_model = _build_model_instance(
+                hidden_dim=cand_hidden,
+                num_layers=cand_layers,
+                dropout=cand_dropout,
+                attn_dropout=cand_attn_dropout,
+                heads=cand_heads,
+                emit_warnings=False,
+            )
+            tune_optimizer = torch.optim.Adam(tune_model.parameters(), lr=cand_lr, weight_decay=cand_wd)
+            tune_scaler = GradScaler(enabled=use_cuda)
+            local_best_val = float("inf")
+            local_bad_epochs = 0
+            best_state = None
+
+            for _ in range(tune_max_epochs):
+                tune_model.train()
+                for batch in train_loader:
+                    batch = batch.to(device, non_blocking=True)
+                    tune_optimizer.zero_grad()
+                    with amp.autocast(device_type="cuda", enabled=use_cuda):
+                        logits = tune_model(batch.x, batch.edge_index, batch.edge_weight)
+                        mask = batch.valid_mask & torch.isfinite(batch.y)
+                        if mask.sum() == 0:
+                            continue
+                        target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                        loss = torch.nn.functional.mse_loss(logits[mask], target_scaled[mask])
+                    tune_scaler.scale(loss).backward()
+                    torch.nn.utils.clip_grad_norm_(tune_model.parameters(), cand_clip)
+                    tune_scaler.step(tune_optimizer)
+                    tune_scaler.update()
+
+                tune_model.eval()
+                val_losses = []
+                with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
+                    for batch in val_loader:
+                        batch = batch.to(device, non_blocking=True)
+                        logits = tune_model(batch.x, batch.edge_index, batch.edge_weight)
+                        mask = batch.valid_mask & torch.isfinite(batch.y)
+                        if mask.sum() == 0:
+                            continue
+                        target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                        loss = torch.nn.functional.mse_loss(logits[mask], target_scaled[mask])
+                        val_losses.append(loss.detach())
+                mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("inf")
+                if mean_val < local_best_val:
+                    local_best_val = mean_val
+                    local_bad_epochs = 0
+                    best_state = {k: v.detach().cpu().clone() for k, v in tune_model.state_dict().items()}
+                else:
+                    local_bad_epochs += 1
+                    if local_bad_epochs >= tune_patience:
+                        break
+
+            if best_state is not None:
+                tune_model.load_state_dict(best_state)
+            val_rows = _collect_prediction_rows(
+                tune_model,
+                val_loader,
+                device=device,
+                tgt_mean_t=tgt_mean_t,
+                tgt_std_t=tgt_std_t,
+                use_cuda=use_cuda,
+            )
+            if not val_rows:
+                score_payload = {"score": float("-inf"), "metric_name": "none", "metric_value": float("nan")}
+            else:
+                val_df = pd.DataFrame(val_rows)
+                score_payload = score_prediction_objective(
+                    objective=objective,
+                    y_true=val_df["realized_ret"].to_numpy(),
+                    preds=val_df["pred"].to_numpy(),
+                    dates=val_df["date"].to_numpy(),
+                    tickers=val_df["ticker"].to_numpy(),
+                    top_k=int(eval_cfg.get("top_k", 20)),
+                    transaction_cost_bps=float(eval_cfg.get("transaction_cost_bps", 5.0)),
+                    risk_free_rate=float(eval_cfg.get("risk_free_rate", 0.0)),
+                    rebalance_freq=int(eval_cfg.get("primary_rebalance_freq", 1)),
+                )
+            metric_name = score_payload["metric_name"]
+            metric_value = score_payload["metric_value"]
+            score = score_payload["score"]
+            print("Params", params, metric_name, metric_value, "score", score)
+            if score > best_score:
+                best_score = score
+                best_params = dict(params)
+
+        if best_params is not None:
+            selected_hidden_dim = int(best_params.get("hidden_dim", selected_hidden_dim))
+            selected_layers = int(best_params.get("num_layers", selected_layers))
+            selected_dropout = float(best_params.get("dropout", selected_dropout))
+            selected_attn_dropout = float(best_params.get("attn_dropout", selected_attn_dropout))
+            selected_heads = int(best_params.get("heads", selected_heads))
+            lr_val = float(best_params.get("lr", lr_val))
+            weight_decay_val = float(best_params.get("weight_decay", weight_decay_val))
+            gradient_clip_val = float(best_params.get("gradient_clip", gradient_clip_val))
+        print("[gnn] best tuning params:", best_params, "best_score", best_score)
+    print(
+        f"[gnn] selected params: hidden_dim={selected_hidden_dim} num_layers={selected_layers} "
+        f"dropout={selected_dropout} heads={selected_heads} lr={lr_val} "
+        f"weight_decay={weight_decay_val}"
+    )
+
+    model = _build_model_instance(
+        hidden_dim=selected_hidden_dim,
+        num_layers=selected_layers,
+        dropout=selected_dropout,
+        attn_dropout=selected_attn_dropout,
+        heads=selected_heads,
+        emit_warnings=True,
+    )
+
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=lr_val,
@@ -761,11 +1006,6 @@ def train_gnn(config):
 
     best_val = float("inf")
     bad_epochs = 0
-    patience = config["training"]["patience"]
-
-    max_epochs = config["training"]["max_epochs"]
-    tgt_mean_t = torch.tensor(tgt_mean, device=device)
-    tgt_std_t = torch.tensor(tgt_std, device=device)
 
     if skip_training:
         if not model_path.exists() and legacy_model_path is not None and legacy_model_path.exists():
@@ -795,7 +1035,7 @@ def train_gnn(config):
                     target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
                     loss = loss_fn(logits[mask], target_scaled[mask])
                 scaler.scale(loss).backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config["training"]["gradient_clip"])
+                torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip_val)
                 scaler.step(optimizer)
                 scaler.update()
                 train_losses.append(loss.detach())
@@ -837,66 +1077,15 @@ def train_gnn(config):
     model.load_state_dict(torch.load(checkpoint_to_load, map_location=device))
     model.eval()
 
-    rows = []
     infer_start = time.time()
-    with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
-        for batch in test_loader:
-            batch = batch.to(device, non_blocking=True)
-            logits = model(batch.x, batch.edge_index, batch.edge_weight)
-            pred = (logits * tgt_std_t + tgt_mean_t).detach().cpu().numpy()
-            y_ret = batch.y.detach().cpu().numpy()
-            valid = batch.valid_mask.detach().cpu().numpy()
-
-            ptr = batch.ptr.detach().cpu().numpy() if hasattr(batch, "ptr") else np.array([0, len(pred)], dtype=int)
-            num_graphs = int(len(ptr) - 1)
-            data_list = batch.to_data_list() if hasattr(batch, "to_data_list") else []
-
-            for gidx in range(num_graphs):
-                start_i, end_i = int(ptr[gidx]), int(ptr[gidx + 1])
-                g_data = data_list[gidx] if gidx < len(data_list) else None
-
-                d = None
-                tlist = None
-                if g_data is not None:
-                    try:
-                        d = pd.to_datetime(getattr(g_data, "date"))
-                    except Exception:
-                        d = None
-                    tickers_attr = getattr(g_data, "tickers", None)
-                    if isinstance(tickers_attr, (list, tuple, np.ndarray, pd.Index)):
-                        tlist = [str(t) for t in list(tickers_attr)]
-
-                if d is None:
-                    date_obj = getattr(batch, "date", None)
-                    if isinstance(date_obj, (list, tuple, np.ndarray, pd.DatetimeIndex)) and len(date_obj) > gidx:
-                        d = pd.to_datetime(date_obj[gidx])
-                    else:
-                        d = pd.NaT
-
-                if tlist is None:
-                    tlist = [f"UNK_{k}" for k in range(end_i - start_i)]
-                if len(tlist) != (end_i - start_i):
-                    tlist = (tlist + [f"UNK_{k}" for k in range(end_i - start_i)])[: (end_i - start_i)]
-
-                for local_idx, t in enumerate(tlist):
-                    i = start_i + local_idx
-                    if i >= len(valid):
-                        break
-                    if not valid[i] or not np.isfinite(y_ret[i]):
-                        continue
-                    rows.append(
-                        {
-                            "date": d,
-                            "ticker": str(t),
-                            "pred": float(pred[i]),
-                            "realized_ret": float(y_ret[i]),
-                        }
-                    )
-                if debug and end_i > start_i:
-                    day_pred = pred[start_i:end_i]
-                    print(
-                        f"[{config['model']['type'].upper()}] test day {d.date()} pred mean {float(np.mean(day_pred)):.6f} std {float(np.std(day_pred)):.6f}"
-                    )
+    rows = _collect_prediction_rows(
+        model,
+        test_loader,
+        device=device,
+        tgt_mean_t=tgt_mean_t,
+        tgt_std_t=tgt_std_t,
+        use_cuda=use_cuda,
+    )
     inference_seconds = time.time() - infer_start
 
     pred_df = pd.DataFrame(rows)

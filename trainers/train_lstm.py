@@ -10,7 +10,6 @@ LSTM trainer with:
 
 import time
 from pathlib import Path
-from itertools import product
 import json
 
 import numpy as np
@@ -33,6 +32,7 @@ from utils.splits import split_time
 from utils.predictions import sanitize_predictions
 from utils.eval_runner import evaluate_and_report
 from utils.artifacts import resolve_output_dirs
+from utils.tuning import enumerate_param_candidates, score_prediction_objective
 
 
 class TensorLSTMDataset(Dataset):
@@ -199,69 +199,81 @@ def train_lstm(config):
     use_tuning = tune_cfg.get("enabled", False)
     print("LSTM tuning enabled:", use_tuning)
 
+    fixed_params = {
+        "hidden_dim": int(config["model"]["hidden_dim"]),
+        "num_layers": int(config["model"]["num_layers"]),
+        "dropout": float(config["model"]["dropout"]),
+        "lr": float(config["training"]["lr"]),
+    }
     if not use_tuning:
-        hidden_dim = config["model"]["hidden_dim"]
-        num_layers = config["model"]["num_layers"]
-        dropout    = config["model"]["dropout"]
-        lr         = config["training"]["lr"]
-
-        best_params = {
-            "hidden_dim": hidden_dim,
-            "num_layers": num_layers,
-            "dropout": dropout,
-            "lr": lr,
-        }
+        best_params = fixed_params
         print("Using fixed LSTM parameters:", best_params)
-
     else:
-        param_grid = {
+        default_grid = {
             "hidden_dim": [32, 64],
             "num_layers": [1, 2],
-            "dropout":    [0.0, 0.2],
-            "lr":         [0.0003, 0.0005],
+            "dropout": [0.0, 0.2],
+            "lr": [0.0003, 0.0005],
         }
+        param_grid = tune_cfg.get("param_grid", default_grid)
+        tuning_objective = str(tune_cfg.get("objective", "val_rmse"))
+        sample_mode = str(tune_cfg.get("sample_mode", "grid"))
+        max_trials = int(tune_cfg.get("max_trials", 0) or 0)
+        tuning_seed = int(tune_cfg.get("seed", config.get("seed", 42)))
+        candidates = enumerate_param_candidates(
+            fixed_params=fixed_params,
+            param_grid=param_grid,
+            sample_mode=sample_mode,
+            max_trials=max_trials,
+            seed=tuning_seed,
+        )
+        max_epochs_tune = int(tune_cfg.get("tune_max_epochs", min(10, config["training"]["max_epochs"])))
+        tune_patience = int(tune_cfg.get("tune_patience", max(2, min(5, config["training"]["patience"]))))
+        print(
+            f"Starting LSTM hyperparameter search: objective={tuning_objective} "
+            f"sample_mode={sample_mode} candidates={len(candidates)}"
+        )
 
-        best_val = float("inf")
         best_params = None
+        best_score = float("-inf")
 
-        max_epochs_tune = min(10, config["training"]["max_epochs"])
-        print("Starting LSTM hyperparameter search")
+        X_train, y_train = splits["train"]["X"], splits["train"]["y"]
+        X_val, y_val = splits["val"]["X"], splits["val"]["y"]
+        y_val_np = y_val.detach().cpu().numpy()
+        val_dates = splits["val"]["dates"]
+        val_tickers = splits["val"]["tickers"]
 
-        for values in product(*param_grid.values()):
-            params = dict(zip(param_grid.keys(), values))
+        train_ds = TensorLSTMDataset(X_train, y_train, [], [])
+        val_ds = TensorLSTMDataset(X_val, y_val, [], [])
+        bs = max(2, config["training"]["batch_size"])
+        num_workers = default_num_workers()
+        loader_kwargs = {
+            "batch_size": bs,
+            "shuffle": True,
+            "num_workers": num_workers,
+            "pin_memory": use_cuda,
+            "persistent_workers": num_workers > 0,
+        }
+        train_loader_tune = DataLoader(train_ds, **loader_kwargs)
+        val_loader_tune = DataLoader(val_ds, **{**loader_kwargs, "shuffle": False})
+
+        for params in candidates:
             print("Trying params:", params)
-
             model = LSTMModel(
                 input_dim=len(feat_cols),
-                hidden_dim=params["hidden_dim"],
-                num_layers=params["num_layers"],
-                dropout=params["dropout"],
+                hidden_dim=int(params["hidden_dim"]),
+                num_layers=int(params["num_layers"]),
+                dropout=float(params["dropout"]),
             ).to(device)
 
-            optimizer = torch.optim.Adam(model.parameters(), lr=params["lr"])
+            optimizer = torch.optim.Adam(model.parameters(), lr=float(params["lr"]))
             loss_fn = torch.nn.MSELoss()
-
-            X_train, y_train = splits["train"]["X"], splits["train"]["y"]
-            X_val, y_val = splits["val"]["X"], splits["val"]["y"]
-
-            train_ds = TensorLSTMDataset(X_train, y_train, [], [])
-            val_ds   = TensorLSTMDataset(X_val, y_val, [], [])
-            bs = max(2, config["training"]["batch_size"])
-            num_workers = default_num_workers()
-            loader_kwargs = {
-                "batch_size": bs,
-                "shuffle": True,
-                "num_workers": num_workers,
-                "pin_memory": use_cuda,
-                "persistent_workers": num_workers > 0,
-            }
-            train_loader = DataLoader(train_ds, **loader_kwargs)
-            val_loader = DataLoader(val_ds, **{**loader_kwargs, "shuffle": False})
-
             scaler = GradScaler(enabled=use_cuda)
-            for epoch in range(max_epochs_tune):
+            local_best_val = float("inf")
+            local_bad_epochs = 0
+            for _ in range(max_epochs_tune):
                 model.train()
-                for xb, yb in train_loader:
+                for xb, yb in train_loader_tune:
                     xb = xb.to(device, non_blocking=True)
                     yb = yb.to(device, non_blocking=True)
                     optimizer.zero_grad()
@@ -277,20 +289,46 @@ def train_lstm(config):
                 model.eval()
                 val_losses = []
                 with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
-                    for xb, yb in val_loader:
+                    for xb, yb in val_loader_tune:
                         xb = xb.to(device, non_blocking=True)
                         yb = yb.to(device, non_blocking=True)
                         pred = model(xb)
                         val_losses.append(loss_fn(pred, yb).detach())
-
                 mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("inf")
-                print("Params", params, "val_loss", mean_val)
+                if mean_val < local_best_val:
+                    local_best_val = mean_val
+                    local_bad_epochs = 0
+                else:
+                    local_bad_epochs += 1
+                    if local_bad_epochs >= tune_patience:
+                        break
 
-                if mean_val < best_val:
-                    best_val = mean_val
-                    best_params = params
+            model.eval()
+            val_preds = []
+            with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
+                for xb, _ in val_loader_tune:
+                    xb = xb.to(device, non_blocking=True)
+                    val_preds.extend(model(xb).detach().cpu().numpy().tolist())
+            score_payload = score_prediction_objective(
+                objective=tuning_objective,
+                y_true=y_val_np,
+                preds=val_preds,
+                dates=val_dates,
+                tickers=val_tickers,
+                top_k=int(config["evaluation"].get("top_k", 20)),
+                transaction_cost_bps=float(config["evaluation"].get("transaction_cost_bps", 5.0)),
+                risk_free_rate=float(config["evaluation"].get("risk_free_rate", 0.0)),
+                rebalance_freq=int(config["evaluation"].get("primary_rebalance_freq", 1)),
+            )
+            metric_name = score_payload["metric_name"]
+            metric_value = score_payload["metric_value"]
+            score = score_payload["score"]
+            print("Params", params, metric_name, metric_value, "score", score)
+            if score > best_score:
+                best_score = score
+                best_params = params
 
-        print("Best LSTM parameters:", best_params, "with val_loss", best_val)
+        print("Best LSTM parameters:", best_params, "best_score", best_score)
 
     # 3. Final training
     hidden_dim = best_params["hidden_dim"]

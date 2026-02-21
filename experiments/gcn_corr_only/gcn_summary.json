@@ -4,14 +4,14 @@
   "protocol_version": "v1_thesis_core",
   "target_policy_hash": "92b426b26106",
   "stats": {
-    "final_value": 1.6153642785785631,
-    "cumulative_return": 0.6229480441952175,
-    "annualized_return": 0.10203369998079559,
-    "annualized_volatility": 0.1930275020030487,
-    "max_drawdown": -0.3048850075099008,
-    "sharpe": 0.03751151447963114,
-    "sortino": 0.04673232709224052,
-    "avg_turnover": 0.5055732484076433
+    "final_value": 1.5307585031021584,
+    "cumulative_return": 0.5455192068166503,
+    "annualized_return": 0.09127777610518706,
+    "annualized_volatility": 0.20430229178627635,
+    "max_drawdown": -0.29541496548940194,
+    "sharpe": 0.03276453218389367,
+    "sortino": 0.04134793955774803,
+    "avg_turnover": 0.534156050955414
   },
   "buy_and_hold_stats": {
     "final_value": 5.049288556044275,
@@ -31,21 +31,21 @@
     "sharpe": 0.048298077100140946,
     "sortino": 0.05875875777239032
   },
-  "ic_mean": 0.006722976655292103,
-  "ic_tstat": 0.9658505022412467,
-  "volatility": 0.19295064454350058,
-  "max_drawdown": -0.3048850075099008,
+  "ic_mean": 0.004237780126530707,
+  "ic_tstat": 0.5476512794424551,
+  "volatility": 0.2042209450612573,
+  "max_drawdown": -0.29541496548940194,
   "stats_by_rebalance_freq": {
     "1": {
       "stats": {
-        "final_value": 1.6153642785785631,
-        "cumulative_return": 0.6229480441952175,
-        "annualized_return": 0.10203369998079559,
-        "annualized_volatility": 0.1930275020030487,
-        "max_drawdown": -0.3048850075099008,
-        "sharpe": 0.03751151447963114,
-        "sortino": 0.04673232709224052,
-        "avg_turnover": 0.5055732484076433
+        "final_value": 1.5307585031021584,
+        "cumulative_return": 0.5455192068166503,
+        "annualized_return": 0.09127777610518706,
+        "annualized_volatility": 0.20430229178627635,
+        "max_drawdown": -0.29541496548940194,
+        "sharpe": 0.03276453218389367,
+        "sortino": 0.04134793955774803,
+        "avg_turnover": 0.534156050955414
       },
       "buy_and_hold_stats": {
         "final_value": 5.049288556044275,
@@ -65,22 +65,22 @@
         "sharpe": 0.048298077100140946,
         "sortino": 0.05875875777239032
       },
-      "ic_mean": 0.006722976655292103,
-      "ic_tstat": 0.9658505022412467,
-      "volatility": 0.19295064454350058,
-      "max_drawdown": -0.3048850075099008,
+      "ic_mean": 0.004237780126530707,
+      "ic_tstat": 0.5476512794424551,
+      "volatility": 0.2042209450612573,
+      "max_drawdown": -0.29541496548940194,
       "daily_metrics_path": "experiments/gcn_corr_only/gcn_daily_metrics_reb1.csv"
     },
     "5": {
       "stats": {
-        "final_value": 1.8933799593460294,
-        "cumulative_return": 0.9022689449608321,
-        "annualized_return": 0.1377118034618583,
-        "annualized_volatility": 0.19055000872278613,
-        "max_drawdown": -0.2843762016437248,
-        "sharpe": 0.04836500875563174,
-        "sortino": 0.06218921649654157,
-        "avg_turnover": 0.13527070063694271
+        "final_value": 1.9210978425497414,
+        "cumulative_return": 0.9396224863802083,
+        "annualized_return": 0.14215935546994407,
+        "annualized_volatility": 0.20654903856424542,
+        "max_drawdown": -0.3229362170362562,
+        "sharpe": 0.04647724513460748,
+        "sortino": 0.05581081481295034,
+        "avg_turnover": 0.1438694267515924
       },
       "buy_and_hold_stats": {
         "final_value": 5.049288556044275,
@@ -100,10 +100,10 @@
         "sharpe": 0.048298077100140946,
         "sortino": 0.05875875777239032
       },
-      "ic_mean": 0.006722976655292103,
-      "ic_tstat": 0.9658505022412467,
-      "volatility": 0.19047413772287508,
-      "max_drawdown": -0.2843762016437248,
+      "ic_mean": 0.004237780126530707,
+      "ic_tstat": 0.5476512794424551,
+      "volatility": 0.20646679725556444,
+      "max_drawdown": -0.3229362170362562,
       "daily_metrics_path": "experiments/gcn_corr_only/gcn_daily_metrics_reb5.csv"
     }
   },
