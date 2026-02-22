@@ -1,0 +1,49 @@
+experiment_name: smoke_gcn_corr_only
+
+data:
+  price_file: "data/processed/prices.parquet"
+  universe_file: "data/processed/universe.csv"
+  # Short date range for smoke test
+  start_date: "2018-01-01"
+  end_date: "2018-03-31"
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  lookback_window: 20
+  corr_window: 20
+  corr_threshold: 0.4
+  min_history: 50
+
+graph:
+  use_corr: true
+  use_sector: false
+  use_granger: false
+
+model:
+  family: gnn
+  type: gcn
+  input_dim: 32
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.1
+
+training:
+  device: "cpu"
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 1e-5
+  max_epochs: 1
+  gradient_clip: 1.0
+  patience: 2
+  val_start: "2018-02-15"
+  test_start: "2018-03-01"
+  num_workers: 0
+
+loss:
+  type: "mse"
+
+evaluation:
+  top_k: 10
+  transaction_cost_bps: 5
+  risk_free_rate: 0.0
+  out_dir: "experiments/smoke_gcn_corr_only"

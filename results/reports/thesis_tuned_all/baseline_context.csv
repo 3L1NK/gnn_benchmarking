@@ -1,0 +1,3 @@
+rebalance_freq,source_run_tag,global_start_date,global_end_date,global_final_value,test_start_date,test_end_date,test_final_value,test_rebased
+1,xgb_node2vec_corr_tuned_all,2000-03-29,2024-12-30,51.17842005745584,2020-01-02,2024-12-27,5.049288556044275,True
+5,xgb_node2vec_corr_tuned_all,2000-03-29,2024-12-30,51.17842005745584,2020-01-02,2024-12-27,5.049288556044275,True

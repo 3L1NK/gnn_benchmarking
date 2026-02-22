@@ -1,0 +1,19 @@
+include:
+  - "configs/templates/models/tgat_static.yaml"
+
+experiment_name: tgat_ablation_wcorr_topk
+
+# Ablation A: increase correlation weight and neighbor budget
+graph:
+  use_corr: true
+  corr_top_k: 20
+  w_corr: 1.5
+  max_edge_weight: 1.0
+
+training:
+  max_epochs: 30
+  patience: 5
+
+evaluation:
+  top_k: 20
+  out_dir: "experiments/ablation/tgat/wcorr_topk"

@@ -1,43 +1,52 @@
 import pandas as pd
 import numpy as np
-from .metrics import sharpe_ratio, sortino_ratio
+from .metrics import portfolio_metrics
 
 def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
     """
     price_panel has columns: date, ticker, log_ret_1d (or some daily return).
-    Equal weight in all tickers at start, never rebalance.
+    Equal weight in all tickers at start, never rebalance (weights drift).
     """
 
     df = price_panel.copy()
     df["date"] = pd.to_datetime(df["date"])
 
     # pivot returns to matrix [dates, tickers]
-    ret_mat = df.pivot(index="date", columns="ticker", values="log_ret_1d").sort_index()
-    ret_mat = ret_mat.fillna(0.0).values  # shape [T, N]
+    ret_df = df.pivot(index="date", columns="ticker", values="log_ret_1d").sort_index()
 
-    n_assets = ret_mat.shape[1]
-    w = np.ones(n_assets) / n_assets
+    # Fix universe at start date (no entry for tickers without a start return).
+    start_date = ret_df.index[0]
+    start_mask = ret_df.loc[start_date].notna()
+    ret_df = ret_df.loc[:, start_mask]
 
-    port_ret = ret_mat.dot(w)  # shape [T]
-    equity = (1 + port_ret).cumprod()
+    # Fill remaining missing values as 0.0 (treat gaps as flat returns)
+    ret_df = ret_df.fillna(0.0)
 
-    eq_series = pd.Series(equity, index=sorted(df["date"].unique()))
+    # The input column is log returns (log_ret_1d). Convert to simple returns
+    # before compounding: simple_ret = exp(log_ret) - 1
+    simple_ret = np.expm1(ret_df.values)  # shape [T, N]
 
-    stats = {
-        "final_value": float(eq_series.iloc[-1]),
-        "sharpe": sharpe_ratio(port_ret, risk_free_rate),
-        "sortino": sortino_ratio(port_ret, risk_free_rate),
-    }
+    # Buy-and-hold: equal dollars at t0, no rebalance.
+    # Portfolio equity is mean of cumulative wealth paths.
+    cum_wealth = (1.0 + simple_ret).cumprod(axis=0)  # shape [T, N]
+    equity = cum_wealth.mean(axis=1)
+    port_ret = pd.Series(equity, index=ret_df.index).pct_change().dropna().values
+
+    eq_series = pd.Series(equity, index=ret_df.index)
+
+    stats = portfolio_metrics(eq_series, port_ret, risk_free_rate)
 
     return eq_series, port_ret, stats
 
 
-def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate=0.0, rebalance_freq=5):
+def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate=0.0, rebalance_freq=1):
     """
     pred_df columns: date, ticker, pred, realized_ret
-    Long only top_k portfolio, equal weight, rebalancing every `rebalance_freq` days (default 5).
+    Long only top_k portfolio, equal weight, rebalancing every `rebalance_freq` days (default 1).
     Positions are held between rebalances; transaction costs apply on rebalance days.
     """
+    if rebalance_freq < 1:
+        raise ValueError(f"rebalance_freq must be >= 1, got {rebalance_freq}")
 
     df = pred_df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -57,7 +66,22 @@ def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate
         if day_df.empty:
             continue
 
-        todays_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+        # realized_ret in our pipeline is log returns (log_ret_1d). Convert to
+        # simple returns before compounding: simple = exp(log) - 1
+        raw_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+        todays_ret = {}
+        for k, v in raw_ret.items():
+            try:
+                if pd.isna(v):
+                    todays_ret[k] = 0.0
+                else:
+                    todays_ret[k] = float(np.expm1(v))
+            except Exception:
+                # fallback: if value not numeric, treat as zero
+                try:
+                    todays_ret[k] = float(v)
+                except Exception:
+                    todays_ret[k] = 0.0
         transaction_cost = 0.0
 
         # Rebalance on schedule; otherwise hold previous weights
@@ -97,12 +121,8 @@ def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate
         index=[d for d, _ in equity_curve],
     )
 
-    stats = {
-        "final_value": equity,
-        "sharpe": sharpe_ratio(daily_returns, risk_free_rate),
-        "sortino": sortino_ratio(daily_returns, risk_free_rate),
-        "avg_turnover": float(np.mean(daily_turnover)) if daily_turnover else 0.0,
-    }
+    stats = portfolio_metrics(eq_series, daily_returns, risk_free_rate)
+    stats["avg_turnover"] = float(np.mean(daily_turnover)) if daily_turnover else 0.0
 
     return eq_series, daily_returns, stats
 
@@ -163,7 +183,20 @@ def backtest_long_short(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rat
         transaction_cost = turnover * (transaction_cost_bps / 10000.0)
 
         # compute portfolio return
-        todays_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+        # convert log realized returns to simple returns for portfolio math
+        raw_ret = day_df.set_index("ticker")["realized_ret"].to_dict()
+        todays_ret = {}
+        for k, v in raw_ret.items():
+            try:
+                if pd.isna(v):
+                    todays_ret[k] = 0.0
+                else:
+                    todays_ret[k] = float(np.expm1(v))
+            except Exception:
+                try:
+                    todays_ret[k] = float(v)
+                except Exception:
+                    todays_ret[k] = 0.0
 
         r = 0.0
         for t, w in new_weights.items():
@@ -183,11 +216,7 @@ def backtest_long_short(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rat
         index=[d for d, _ in equity_curve],
     )
 
-    stats = {
-        "final_value": equity,
-        "sharpe": sharpe_ratio(daily_returns, risk_free_rate),
-        "sortino": sortino_ratio(daily_returns, risk_free_rate),
-        "avg_turnover": turnover / len(dates),
-    }
+    stats = portfolio_metrics(eq_series, daily_returns, risk_free_rate)
+    stats["avg_turnover"] = turnover / len(dates) if dates else 0.0
 
     return eq_series, daily_returns, stats

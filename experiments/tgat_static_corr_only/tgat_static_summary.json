@@ -1,0 +1,114 @@
+{
+  "run_tag": "tgat_static_corr_only",
+  "model_type": "tgat_static",
+  "protocol_version": "v1_thesis_core",
+  "target_policy_hash": "92b426b26106",
+  "stats": {
+    "final_value": 1.69796229090714,
+    "cumulative_return": 0.7078101606848106,
+    "annualized_return": 0.11336091029073647,
+    "annualized_volatility": 0.2080872442961228,
+    "max_drawdown": -0.3030084070320683,
+    "sharpe": 0.03869968327943332,
+    "sortino": 0.05021566695435389,
+    "avg_turnover": 0.6094745222929937
+  },
+  "buy_and_hold_stats": {
+    "final_value": 5.049288556044275,
+    "cumulative_return": 4.049288556044275,
+    "annualized_return": 0.3842240191009789,
+    "annualized_volatility": 0.3023422915663287,
+    "max_drawdown": -0.3471179958366627,
+    "sharpe": 0.07731121211800307,
+    "sortino": 0.10941253737924157
+  },
+  "equal_weight_stats": {
+    "final_value": 2.0221621477103713,
+    "cumulative_return": 1.0221621477103713,
+    "annualized_return": 0.1518790337272664,
+    "annualized_volatility": 0.21458010018431448,
+    "max_drawdown": -0.3464553449053246,
+    "sharpe": 0.048298077100140946,
+    "sortino": 0.05875875777239032
+  },
+  "ic_mean": 0.010112771971143557,
+  "ic_tstat": 1.400612106461985,
+  "volatility": 0.20800439052246356,
+  "max_drawdown": -0.3030084070320683,
+  "stats_by_rebalance_freq": {
+    "1": {
+      "stats": {
+        "final_value": 1.69796229090714,
+        "cumulative_return": 0.7078101606848106,
+        "annualized_return": 0.11336091029073647,
+        "annualized_volatility": 0.2080872442961228,
+        "max_drawdown": -0.3030084070320683,
+        "sharpe": 0.03869968327943332,
+        "sortino": 0.05021566695435389,
+        "avg_turnover": 0.6094745222929937
+      },
+      "buy_and_hold_stats": {
+        "final_value": 5.049288556044275,
+        "cumulative_return": 4.049288556044275,
+        "annualized_return": 0.3842240191009789,
+        "annualized_volatility": 0.3023422915663287,
+        "max_drawdown": -0.3471179958366627,
+        "sharpe": 0.07731121211800307,
+        "sortino": 0.10941253737924157
+      },
+      "equal_weight_stats": {
+        "final_value": 2.0221621477103713,
+        "cumulative_return": 1.0221621477103713,
+        "annualized_return": 0.1518790337272664,
+        "annualized_volatility": 0.21458010018431448,
+        "max_drawdown": -0.3464553449053246,
+        "sharpe": 0.048298077100140946,
+        "sortino": 0.05875875777239032
+      },
+      "ic_mean": 0.010112771971143557,
+      "ic_tstat": 1.400612106461985,
+      "volatility": 0.20800439052246356,
+      "max_drawdown": -0.3030084070320683,
+      "daily_metrics_path": "experiments/tgat_static_corr_only/tgat_static_daily_metrics_reb1.csv"
+    },
+    "5": {
+      "stats": {
+        "final_value": 1.9041574874618292,
+        "cumulative_return": 0.9152012515507728,
+        "annualized_return": 0.13925944500708298,
+        "annualized_volatility": 0.21426863144612404,
+        "max_drawdown": -0.35462193724391367,
+        "sharpe": 0.04477569093575914,
+        "sortino": 0.05421168546417268,
+        "avg_turnover": 0.14251592356687898
+      },
+      "buy_and_hold_stats": {
+        "final_value": 5.049288556044275,
+        "cumulative_return": 4.049288556044275,
+        "annualized_return": 0.3842240191009789,
+        "annualized_volatility": 0.3023422915663287,
+        "max_drawdown": -0.3471179958366627,
+        "sharpe": 0.07731121211800307,
+        "sortino": 0.10941253737924157
+      },
+      "equal_weight_stats": {
+        "final_value": 2.0221621477103713,
+        "cumulative_return": 1.0221621477103713,
+        "annualized_return": 0.1518790337272664,
+        "annualized_volatility": 0.21458010018431448,
+        "max_drawdown": -0.3464553449053246,
+        "sharpe": 0.048298077100140946,
+        "sortino": 0.05875875777239032
+      },
+      "ic_mean": 0.010112771971143557,
+      "ic_tstat": 1.400612106461985,
+      "volatility": 0.2141833164391799,
+      "max_drawdown": -0.35462193724391367,
+      "daily_metrics_path": "experiments/tgat_static_corr_only/tgat_static_daily_metrics_reb5.csv"
+    }
+  },
+  "prediction_rows": 40192,
+  "prediction_unique_pairs": 40192,
+  "graph_directed": false,
+  "graph_make_undirected": true
+}

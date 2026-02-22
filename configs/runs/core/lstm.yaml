@@ -1,0 +1,54 @@
+experiment_name: lstm
+
+data:
+  price_file: "data/processed/prices.parquet"
+  universe_file: "data/processed/universe.csv"
+  start_date: "2000-01-01"
+  end_date: "2024-12-31"
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  lookback_window: 60
+  min_history: 250
+
+model:
+  family: lstm
+  type: lstm
+  input_dim: 16           # per asset feature dim
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.2
+
+training:
+  device: "cuda"
+  batch_size: 512
+  lr: 0.0005
+  max_epochs: 40
+  patience: 6
+  val_start: "2016-01-01"
+  test_start: "2020-01-01"
+
+loss:
+  type: "mse"
+
+evaluation:
+  top_k: 20
+  transaction_cost_bps: 5
+  risk_free_rate: 0.0
+  backtest_policies: [1, 5]
+  primary_rebalance_freq: 1
+  results_path: "results/results.jsonl"
+  out_dir: "experiments/lstm"
+
+experiment:
+  protocol_version: "v1_thesis_core"
+  enforce_protocol: true
+
+tuning:
+  enabled: false
+  hidden_dim: [32, 64]
+  num_layers: [1, 2]
+  dropout: [0.0, 0.1]
+  lr: [0.0005, 0.001]
+  max_epochs: 10
+  patience: 3

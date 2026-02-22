@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller, kpss
@@ -173,7 +175,13 @@ def add_technical_features(
 
         return g
 
-    df = df.groupby(id_col, group_keys=False).apply(_per_asset)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="DataFrameGroupBy.apply operated on the grouping columns.*",
+            category=FutureWarning,
+        )
+        df = df.groupby(id_col, group_keys=False).apply(_per_asset)
 
     df = df.dropna().reset_index(drop=True)
 

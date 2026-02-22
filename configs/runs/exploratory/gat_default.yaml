@@ -1,0 +1,21 @@
+experiment_name: gat
+
+model:
+  family: gnn
+  type: gat
+  hidden_dim_candidates: [32, 64]
+  hidden_dim: 64
+  num_layers: 1
+  dropout: 0.1
+  heads: 1
+
+include: "configs/default.yaml"
+
+# Lower learning rate for GAT for stability
+training:
+  lr: 0.0003
+
+data:
+  target_horizon: 1  # daily horizon for consistent labels
+  target_type: regression
+  target_name: log_return

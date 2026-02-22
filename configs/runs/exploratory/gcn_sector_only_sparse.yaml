@@ -1,0 +1,32 @@
+experiment_name: gcn_sector_only_sparse
+
+include: "configs/default.yaml"
+
+model:
+  family: gnn
+  type: gcn
+  hidden_dim: 96
+  num_layers: 2
+  dropout: 0.2
+
+data:
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  corr_window: 90
+  corr_threshold: 0.55
+
+graph:
+  use_corr: false
+  use_sector: true
+  use_granger: false
+  sector_top_k: 2
+  w_sector: 0.25
+  max_edge_weight: 1.0
+
+training:
+  batch_size: 4
+  lr: 0.001
+  weight_decay: 0.00001
+  max_epochs: 180
+  patience: 50

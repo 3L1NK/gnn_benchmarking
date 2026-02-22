@@ -1,0 +1,42 @@
+experiment_name: gat_finetune
+
+include: "configs/default.yaml"
+
+model:
+  family: gnn
+  type: gat
+  hidden_dim_candidates: [32, 48, 64]
+  hidden_dim: 48
+  num_layers: 2
+  heads: 4
+  dropout: 0.2          # feature dropout
+  attn_dropout: 0.2     # attention dropout inside GATConv
+
+data:
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  corr_window: 90
+  corr_threshold: 0.3
+
+graph:
+  use_corr: true
+  use_sector: true
+  use_granger: false
+  corr_top_k: 12
+  corr_min_periods: 45
+  sector_top_k: 6
+  granger_top_k: 4
+  w_corr: 1.0
+  w_sector: 0.25
+  w_granger: 0.15
+  sector_weight: 0.25
+  industry_weight: 0.1
+  max_edge_weight: 1.0
+
+training:
+  batch_size: 4
+  lr: 0.00025
+  weight_decay: 0.00005
+  max_epochs: 260
+  patience: 70

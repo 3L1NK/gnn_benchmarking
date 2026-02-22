@@ -1,185 +1,198 @@
 # trainers/train_gnn.py
 
+import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
+from torch import amp
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader as GeoDataLoader
+from torch.cuda.amp import GradScaler
 
-from models.gnn_model import StaticGNN
+from models.graph.static_gnn import StaticGNN
+try:
+    from models.graph.tgcn_static import StaticTGCN
+except Exception:
+    StaticTGCN = None
+try:
+    from models.graph.tgat_static import StaticTGAT
+except Exception:
+    StaticTGAT = None
 from utils.seeds import set_seed
 from utils.data_loading import load_price_panel
 from utils.features import add_technical_features
-from utils.metrics import rank_ic, hit_rate
-from utils.backtest import backtest_long_only, backtest_buy_and_hold
-from utils.plot import (
-    plot_daily_ic,
-    plot_ic_hist,
-    plot_equity_curve,
-    plot_equity_comparison,
-)
+from utils.cache import cache_load, cache_save, cache_key, cache_path
+from utils.device import get_device, default_num_workers
+from utils.sanity import check_tensor
+from utils.targets import build_target
+from utils.preprocessing import scale_features
+from utils.splits import split_time
+from utils.results import edge_type_from_graph_cfg
+from utils.predictions import sanitize_predictions
+from utils.eval_runner import evaluate_and_report
+from utils.artifacts import resolve_output_dirs
+from utils.tuning import enumerate_param_candidates, score_prediction_objective
 
 
 def _build_snapshots_and_targets(config):
-    """
-    Create one graph snapshot per trading day with node features, edges and targets.
-
-    Target is regression: next log return (ret_target) stored as Data.y.
-
-    Important: we enforce a fixed universe of tickers for every day so that
-    all graph snapshots have the same number and ordering of nodes.
-    This is required for temporal models like TGCN.
-    """
-
+    debug = bool(config.get("debug", {}).get("leakage", False))
     price_file = config["data"]["price_file"]
     start = config["data"]["start_date"]
     end = config["data"]["end_date"]
-    horizon = config["data"]["target_horizon"]
     corr_window = config["data"]["corr_window"]
     corr_thr = config["data"]["corr_threshold"]
-    graph_cfg = config.get("graph_edges", {})
-    use_corr = graph_cfg.get("use_correlation", True)
-    use_sector = graph_cfg.get("use_sector", True)
-    use_industry = graph_cfg.get("use_industry", True)
+
+    # New graph ablation flags (must fully control edge inclusion)
+    graph_cfg = config.get("graph", {})
+    use_corr = bool(graph_cfg.get("use_corr", False))
+    use_sector = bool(graph_cfg.get("use_sector", False))
+    use_granger = bool(graph_cfg.get("use_granger", False))
+    make_undirected_cfg = graph_cfg.get("make_undirected")
+    if make_undirected_cfg is None:
+        make_undirected_cfg = graph_cfg.get("force_undirected")
+    if make_undirected_cfg is None:
+        make_undirected = not use_granger
+    else:
+        make_undirected = bool(make_undirected_cfg)
+
+    # correlation params
     corr_top_k = int(graph_cfg.get("corr_top_k", 10))
     corr_min_periods = int(graph_cfg.get("corr_min_periods", max(5, corr_window // 2)))
+    # per-edge-type degree budgets (mandatory)
+    sector_top_k = int(graph_cfg.get("sector_top_k", 5))
+    granger_top_k = int(graph_cfg.get("granger_top_k", 5))
+
+    # per-edge-type scalar weights (mandatory)
+    w_corr = float(graph_cfg.get("w_corr", 1.0))
+    w_sector = float(graph_cfg.get("w_sector", 0.2))
+    w_granger = float(graph_cfg.get("w_granger", 0.2))
+    # global clamp for merged edge weights to avoid amplification
+    max_edge_weight = float(graph_cfg.get("max_edge_weight", 1.0))
+
+    # sector/industry weights (only used when use_sector is True)
     sector_weight = float(graph_cfg.get("sector_weight", 0.2))
     industry_weight = float(graph_cfg.get("industry_weight", 0.1))
-    log_edge_stats = graph_cfg.get("log_edge_stats", False)
 
-    # load panel and compute features
     df = load_price_panel(price_file, start, end)
     df, feat_cols = add_technical_features(df)
-
-    # require log_ret_1d for targets and correlation
     if "log_ret_1d" not in df.columns:
         raise ValueError("Expected column 'log_ret_1d' in feature dataframe")
 
-    # drop rows with any NaN in features or log_ret_1d
+    df, target_col = build_target(df, config, target_col="target")
     feature_cols = list(feat_cols) + ["log_ret_1d"]
-    df = df.dropna(subset=feature_cols).reset_index(drop=True)
+    df = df.dropna(subset=feature_cols + [target_col]).reset_index(drop=True)
+    df["date"] = pd.to_datetime(df["date"])
 
-    # load universe metadata for sector and industry
+    df_raw = df.copy()
+    train_mask, _, _, _ = split_time(df["date"], config, label="gnn", debug=debug)
+    pre_cfg = config.get("preprocess", {})
+    do_scale = bool(pre_cfg.get("scale_features", True))
+    df, _ = scale_features(df, feat_cols, train_mask, label="gnn", debug=debug, scale=do_scale)
+
     universe_path = Path("data/processed/universe.csv")
     if not universe_path.exists():
         raise FileNotFoundError("Universe metadata is required at data/processed/universe.csv")
     universe_df = pd.read_csv(universe_path)
 
-    # fixed universe of tickers (same for all days)
     universe_list = sorted(universe_df["ticker"].unique().tolist())
-
     sector_map = dict(zip(universe_df["ticker"], universe_df.get("sector", pd.Series(index=universe_df.index))))
     industry_map = dict(zip(universe_df["ticker"], universe_df.get("industry", pd.Series(index=universe_df.index))))
 
-    # regression style target: next horizon log return
-    df["ret_target"] = df.groupby("ticker")["log_ret_1d"].shift(-horizon)
-
-    # drop rows where we do not know next return
-    df = df.dropna(subset=["ret_target"]).reset_index(drop=True)
-
-    # pivot for correlation on returns, reindex to full universe
     ret_pivot = (
-        df.pivot(index="date", columns="ticker", values="log_ret_1d")
+        df_raw.pivot(index="date", columns="ticker", values="log_ret_1d")
         .reindex(columns=universe_list)
         .sort_index()
     )
 
-    # work per day
-    df["date"] = pd.to_datetime(df["date"])
     dates = sorted(df["date"].unique())
+
+    # Precompute Granger edges from train-only data when requested.
+    granger_map_dir = {}
+    if use_granger:
+        from utils.graphs import granger_edges
+        val_start = pd.to_datetime(config["training"]["val_start"]) if "training" in config else None
+        if val_start is None:
+            raise ValueError("training.val_start must be set to compute granger edges from train-only data")
+        train_mask, _, _, _ = split_time(df["date"], config, label="gnn_granger", debug=debug)
+        if debug and not df.loc[train_mask].empty:
+            train_dates = pd.to_datetime(df.loc[train_mask, "date"])
+            print(f"[gnn] granger window={train_dates.min().date()}..{train_dates.max().date()}")
+        try:
+            gr_edges = granger_edges(df_raw.loc[train_mask], max_lag=int(config.get("granger", {}).get("max_lag", 2)), p_threshold=float(config.get("granger", {}).get("p_threshold", 0.05)))
+            for u, v, w in gr_edges:
+                if u == v:
+                    continue
+                key = (u, v)
+                granger_map_dir[key] = max(granger_map_dir.get(key, 0.0), float(abs(w)))
+        except Exception:
+            granger_map_dir = {}
     snapshots = []
     meta_dates = []
 
     for d in dates:
         d = pd.to_datetime(d)
-
         if d not in ret_pivot.index:
             continue
-
-        # need at least corr_window rows of returns
         idx = ret_pivot.index.get_loc(d)
         if isinstance(idx, slice):
-            # should not happen for unique index
             continue
         if idx < corr_window:
             continue
 
         window_ret = ret_pivot.iloc[idx - corr_window + 1 : idx + 1]
-
-        # universe data at this date
+        window_start = window_ret.index.min()
+        window_end = window_ret.index.max()
+        if debug:
+            print(f"[gnn] snapshot {d.date()} graph_window={window_start.date()}..{window_end.date()}")
+        if window_end > d:
+            raise ValueError(f"[gnn] Leakage detected: window_end {window_end} exceeds snapshot date {d}")
         universe_today = df[df["date"] == d].set_index("ticker")
 
         feat_for_date = {}
         target_ret_for_date = {}
         valid_mask = []
 
-        # build features and targets for the full fixed universe
         for t in universe_list:
             if t in universe_today.index:
                 row = universe_today.loc[t]
                 feat_vec = row[feat_cols].values.astype(float)
-                y_ret = float(row["ret_target"])
+                y_ret = float(row[target_col])
                 valid_mask.append(True)
             else:
-                # ticker not present on this date or dropped by NaNs earlier
-                # use zeros so node exists but carries no signal
                 feat_vec = np.zeros(len(feat_cols), dtype=float)
                 y_ret = 0.0
                 valid_mask.append(False)
-
             feat_for_date[t] = feat_vec
             target_ret_for_date[t] = y_ret
 
-        # node count is fixed
         tickers_list = list(universe_list)
         n_nodes = len(tickers_list)
         if n_nodes < 2:
             continue
 
-        # node feature matrix and realized returns
         x = np.vstack([feat_for_date[t] for t in tickers_list])
         y_ret = np.array([target_ret_for_date[t] for t in tickers_list], dtype=np.float32)
-
         if not np.isfinite(x).all() or not np.isfinite(y_ret).all():
             continue
 
-        # ---------------------------------------
-        # 1) Cross-sectional feature standardization (per day, valid nodes only)
-        # ---------------------------------------
         valid_mask_np = np.array(valid_mask, dtype=bool)
-        x_std = x.copy()
-        for col in range(x_std.shape[1]):
-            vals = x_std[valid_mask_np, col]
-            if vals.size == 0:
-                x_std[:, col] = 0.0
-                continue
-            mean = vals.mean()
-            std = vals.std()
-            if std < 1e-8:
-                x_std[:, col] = 0.0
-            else:
-                x_std[:, col] = (x_std[:, col] - mean) / std
-        x = x_std
-
-        # skip days where all valid nodes are zero after standardization
         if not np.any(np.abs(x[valid_mask_np]) > 1e-8):
-            print(f"[graph] {d.date()} skipped (standardized features all zero for valid nodes)")
             continue
 
-        edge_dict = {}  # (i, j) -> weight
+        # Build per-type edge weight maps (unordered pairs) and normalize separately
+        corr_map = {}
+        sector_map_pairs = {}
 
-        # 1) correlation based edges (top-k by |rho|, no zero-filling)
+        # Correlation edges (per-day)
         if use_corr:
-            window_sub = window_ret[tickers_list].copy()
-            # ignore invalid nodes in correlation
+            window_sub = window_ret[tickers_list]
             if (~valid_mask_np).any():
                 window_sub.loc[:, [t for t, m in zip(tickers_list, valid_mask_np) if not m]] = np.nan
             corr_mat = window_sub.corr(min_periods=corr_min_periods).values
             if corr_mat.shape != (n_nodes, n_nodes):
                 continue
-
             for i in range(n_nodes):
                 row = corr_mat[i]
                 if len(row) != n_nodes:
@@ -191,604 +204,908 @@ def _build_snapshots_and_targets(config):
                     top_idx = sorted(valid_idx, key=lambda j: abs(row[j]), reverse=True)[:corr_top_k]
                 else:
                     top_idx = valid_idx
-
                 for j in top_idx:
                     if not (valid_mask_np[i] and valid_mask_np[j]):
                         continue
                     w = row[j]
                     if not np.isfinite(w) or abs(w) < corr_thr:
                         continue
-                    w_abs = float(abs(w))
-                    edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), w_abs)
-                    edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), w_abs)
+                    key = tuple(sorted((i, j)))
+                    corr_map[key] = max(corr_map.get(key, 0.0), float(abs(w)))
 
-        # 2) sector edges (reduced weight, structural prior)
-        if use_sector and sector_weight > 0:
+        # Sector + Industry edges (controlled by use_sector)
+        if use_sector and (sector_weight > 0 or industry_weight > 0):
             for i in range(n_nodes):
                 ti = tickers_list[i]
                 if not valid_mask_np[i]:
                     continue
                 si = sector_map.get(ti)
-                if si is None or (isinstance(si, float) and np.isnan(si)):
-                    continue
+                ii = industry_map.get(ti)
                 for j in range(i + 1, n_nodes):
                     tj = tickers_list[j]
                     if not valid_mask_np[j]:
                         continue
                     sj = sector_map.get(tj)
-                    if sj is None or (isinstance(sj, float) and np.isnan(sj)):
-                        continue
-                    if si == sj:
-                        edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), sector_weight)
-                        edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), sector_weight)
-
-        # 3) industry edges (reduced weight, structural prior)
-        if use_industry and industry_weight > 0:
-            for i in range(n_nodes):
-                ti = tickers_list[i]
-                if not valid_mask_np[i]:
-                    continue
-                ii = industry_map.get(ti)
-                if ii is None or (isinstance(ii, float) and np.isnan(ii)):
-                    continue
-                for j in range(i + 1, n_nodes):
-                    tj = tickers_list[j]
-                    if not valid_mask_np[j]:
-                        continue
                     ij = industry_map.get(tj)
-                    if ij is None or (isinstance(ij, float) and np.isnan(ij)):
-                        continue
-                    if ii == ij:
-                        edge_dict[(i, j)] = max(edge_dict.get((i, j), 0.0), industry_weight)
-                        edge_dict[(j, i)] = max(edge_dict.get((j, i), 0.0), industry_weight)
+                    # sector match
+                    if sector_weight > 0 and si is not None and sj is not None and si == sj:
+                        key = tuple(sorted((i, j)))
+                        sector_map_pairs[key] = max(sector_map_pairs.get(key, 0.0), float(sector_weight))
+                    # industry match
+                    if industry_weight > 0 and ii is not None and ij is not None and ii == ij:
+                        key = tuple(sorted((i, j)))
+                        sector_map_pairs[key] = max(sector_map_pairs.get(key, 0.0), float(industry_weight))
 
-        if not edge_dict:
-            # no edges, skip this day
+        # Granger edges: use precomputed directed map (ticker-name keys). Map to indices for today's universe
+        gr_map_idx = {}
+        if use_granger and granger_map_dir:
+            for (u, v), w in granger_map_dir.items():
+                if u not in tickers_list or v not in tickers_list:
+                    continue
+                i = tickers_list.index(u)
+                j = tickers_list.index(v)
+                if not (valid_mask_np[i] and valid_mask_np[j]):
+                    continue
+                key = (i, j)
+                gr_map_idx[key] = max(gr_map_idx.get(key, 0.0), float(w))
+
+        # --- Apply per-edge-type trimming and scalar weighting BEFORE merging ---
+        def trim_pair_map(pair_map, top_k, n_nodes):
+            """Trim unordered-pair map so each node has at most `top_k` neighbors.
+            Keep an edge if it is in the top_k of at least one endpoint.
+            """
+            if not pair_map or top_k <= 0:
+                return {}
+            # build adjacency lists
+            adj = {i: [] for i in range(n_nodes)}
+            for (a, b), w in pair_map.items():
+                adj[a].append(((a, b), b, w))
+                adj[b].append(((a, b), a, w))
+
+            keep_keys = set()
+            for node, nbrs in adj.items():
+                if not nbrs:
+                    continue
+                # sort by weight descending
+                nbrs_sorted = sorted(nbrs, key=lambda t: t[2], reverse=True)
+                for item in nbrs_sorted[:top_k]:
+                    keep_keys.add(item[0])
+
+            return {k: v for k, v in pair_map.items() if k in keep_keys}
+
+        def trim_directed_map(edge_map, top_k):
+            """Trim directed edge map so each source has at most `top_k` outgoing edges."""
+            if not edge_map or top_k <= 0:
+                return {}
+            adj = {}
+            for (src, dst), w in edge_map.items():
+                adj.setdefault(src, []).append(((src, dst), w))
+            keep_keys = set()
+            for _, edges in adj.items():
+                edges_sorted = sorted(edges, key=lambda t: t[1], reverse=True)
+                for (key, _) in edges_sorted[:top_k]:
+                    keep_keys.add(key)
+            return {k: v for k, v in edge_map.items() if k in keep_keys}
+
+        # trim per-type maps
+        corr_map = trim_pair_map(corr_map, corr_top_k if corr_top_k is not None else 0, n_nodes)
+        sector_map_pairs = trim_pair_map(sector_map_pairs, sector_top_k if sector_top_k is not None else 0, n_nodes)
+        gr_map_idx = trim_directed_map(gr_map_idx, granger_top_k if granger_top_k is not None else 0)
+
+        # apply per-edge-type scalar weights
+        # Corr: scale normalized corr weights by w_corr
+        if corr_map:
+            vmax = max(corr_map.values())
+            if vmax > 0:
+                for k in list(corr_map.keys()):
+                    corr_map[k] = (corr_map[k] / vmax) * w_corr
+
+        # Sector: set sector edges to uniform w_sector (as requested)
+        if sector_map_pairs:
+            for k in list(sector_map_pairs.keys()):
+                sector_map_pairs[k] = float(w_sector)
+
+        # Granger: scale normalized granger weights by w_granger
+        if gr_map_idx:
+            vmax = max(gr_map_idx.values())
+            if vmax > 0:
+                for k in list(gr_map_idx.keys()):
+                    gr_map_idx[k] = (gr_map_idx[k] / vmax) * w_granger
+
+        # Merge maps (no cross-type normalization)
+        final_map = {}
+
+        def add_edge(src, dst, weight):
+            final_map[(src, dst)] = final_map.get((src, dst), 0.0) + weight
+
+        for (i, j), v in corr_map.items():
+            add_edge(i, j, v)
+            add_edge(j, i, v)
+        for (i, j), v in sector_map_pairs.items():
+            add_edge(i, j, v)
+            add_edge(j, i, v)
+        for (i, j), v in gr_map_idx.items():
+            add_edge(i, j, v)
+            if make_undirected:
+                add_edge(j, i, v)
+
+        # Ensure self-loops are present and strong: weight = 1.0
+        for i_node in range(n_nodes):
+            final_map[(i_node, i_node)] = 1.0
+
+        if not final_map:
             continue
 
-        # build edge_index and edge_weight tensors
-        src, dst = zip(*edge_dict.keys())
-        w_vals = list(edge_dict.values())
+        # Expand directed map into edge list
+        src = []
+        dst = []
+        w_vals = []
+        for (i, j), w in final_map.items():
+            src.append(i)
+            dst.append(j)
+            if i == j:
+                w_vals.append(1.0)
+            else:
+                w_clamped = float(min(w, max_edge_weight)) if np.isfinite(w) else 0.0
+                w_vals.append(w_clamped)
 
         edge_index = torch.tensor([src, dst], dtype=torch.long)
         edge_weight = torch.tensor(w_vals, dtype=torch.float32)
-
-        # filter any non finite edge weights
         mask_edge = torch.isfinite(edge_weight)
         if mask_edge.sum() == 0:
             continue
         edge_index = edge_index[:, mask_edge]
         edge_weight = edge_weight[mask_edge]
 
-        # diagnostics to catch edge explosion
-        num_edges = edge_index.shape[1]
-        deg = torch.bincount(edge_index[0], minlength=n_nodes)
-        avg_deg = float(deg.float().mean().item()) if len(deg) > 0 else 0.0
-        max_deg = int(deg.max().item()) if len(deg) > 0 else 0
-        if log_edge_stats:
-            print(f"[graph] {d.date()} nodes={n_nodes} edges={num_edges} avg_deg={avg_deg:.2f} max_deg={max_deg}")
-
-        # build PyG Data object
         x_tensor = torch.tensor(x, dtype=torch.float32)
         y_ret_tensor = torch.tensor(y_ret, dtype=torch.float32)
         valid_mask_tensor = torch.tensor(valid_mask, dtype=torch.bool)
 
-        graph = Data(
+        g = Data(
             x=x_tensor,
             edge_index=edge_index,
             edge_weight=edge_weight,
             y=y_ret_tensor,
         )
-        graph.y_ret = y_ret_tensor
-        graph.tickers = tickers_list
-        graph.date = d
-        graph.valid_mask = valid_mask_tensor
+        g.valid_mask = valid_mask_tensor
+        g.tickers = tickers_list
+        g.date = d
+        g.window_start = window_start
+        g.window_end = window_end
+        g.is_directed = bool(use_granger and not make_undirected)
+        if debug:
+            # Snapshot diagnostics are useful for leakage/debug checks but too noisy for normal runs.
+            try:
+                n_nodes = g.x.shape[0]
+                n_edges = int(g.edge_index.shape[1]) if g.edge_index is not None else 0
+                valid_nodes = int(valid_mask_np.sum())
+                print(f"[gnn] snapshot {d.date()} nodes={n_nodes} valid_nodes={valid_nodes} edges={n_edges}")
+            except Exception:
+                pass
 
-        snapshots.append(graph)
+        snapshots.append(g)
         meta_dates.append(d)
 
     return snapshots, feat_cols, meta_dates
 
 
-def _split_snapshots_by_date(snapshots, dates, val_start, test_start):
-    """
-    Split daily graph snapshots into train, validation and test sets by date.
-
-    Dates are compared to val_start and test_start.
-    Training uses the earliest period, validation sits in the middle,
-    and testing uses the most recent part of the sample.
-    """
-    val_start = pd.to_datetime(val_start)
-    test_start = pd.to_datetime(test_start)
+def _split_snapshots_by_date(snapshots, dates, config, *, label="gnn", debug=False):
+    train_mask, val_mask, test_mask, _ = split_time(dates, config, label=label, debug=debug)
 
     train_list, val_list, test_list = [], [], []
-
-    for g, d in zip(snapshots, dates):
-        if d < val_start:
+    for g, is_train, is_val, is_test in zip(snapshots, train_mask, val_mask, test_mask):
+        if is_train:
             train_list.append(g)
-        elif d < test_start:
+        elif is_val:
             val_list.append(g)
-        else:
+        elif is_test:
             test_list.append(g)
 
     return train_list, val_list, test_list
 
 
-# 1. Training for static GCN and GAT
-def _train_static_gnn(config):
+def _target_stats(snaps):
+    """Compute mean/std of targets over valid nodes in training set for scaling."""
+    ys = []
+    for g in snaps:
+        if not hasattr(g, "valid_mask"):
+            continue
+        mask = g.valid_mask
+        y = g.y
+        if mask is None or y is None:
+            continue
+        if mask.numel() != y.numel():
+            continue
+        mask = mask & torch.isfinite(y)
+        if mask.sum() == 0:
+            continue
+        ys.append(y[mask])
+    if not ys:
+        return 0.0, 1.0
+    all_y = torch.cat(ys)
+    mean = float(all_y.mean().item())
+    std = float(all_y.std().item())
+    if std < 1e-6:
+        std = 1.0
+    return mean, std
+
+
+def _collect_prediction_rows(model, loader, *, device, tgt_mean_t, tgt_std_t, use_cuda):
+    rows = []
+    model.eval()
+    with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
+        for batch in loader:
+            batch = batch.to(device, non_blocking=True)
+            logits = model(batch.x, batch.edge_index, batch.edge_weight)
+            pred = (logits * tgt_std_t + tgt_mean_t).detach().cpu().numpy()
+            y_ret = batch.y.detach().cpu().numpy()
+            valid = batch.valid_mask.detach().cpu().numpy()
+
+            ptr = batch.ptr.detach().cpu().numpy() if hasattr(batch, "ptr") else np.array([0, len(pred)], dtype=int)
+            num_graphs = int(len(ptr) - 1)
+            data_list = batch.to_data_list() if hasattr(batch, "to_data_list") else []
+
+            for gidx in range(num_graphs):
+                start_i, end_i = int(ptr[gidx]), int(ptr[gidx + 1])
+                g_data = data_list[gidx] if gidx < len(data_list) else None
+
+                d = None
+                tlist = None
+                if g_data is not None:
+                    try:
+                        d = pd.to_datetime(getattr(g_data, "date"))
+                    except Exception:
+                        d = None
+                    tickers_attr = getattr(g_data, "tickers", None)
+                    if isinstance(tickers_attr, (list, tuple, np.ndarray, pd.Index)):
+                        tlist = [str(t) for t in list(tickers_attr)]
+
+                if d is None:
+                    date_obj = getattr(batch, "date", None)
+                    if isinstance(date_obj, (list, tuple, np.ndarray, pd.DatetimeIndex)) and len(date_obj) > gidx:
+                        d = pd.to_datetime(date_obj[gidx])
+                    else:
+                        d = pd.NaT
+
+                if tlist is None:
+                    tlist = [f"UNK_{k}" for k in range(end_i - start_i)]
+                if len(tlist) != (end_i - start_i):
+                    tlist = (tlist + [f"UNK_{k}" for k in range(end_i - start_i)])[: (end_i - start_i)]
+
+                for local_idx, t in enumerate(tlist):
+                    i = start_i + local_idx
+                    if i >= len(valid):
+                        break
+                    if not valid[i] or not np.isfinite(y_ret[i]):
+                        continue
+                    rows.append(
+                        {
+                            "date": d,
+                            "ticker": str(t),
+                            "pred": float(pred[i]),
+                            "realized_ret": float(y_ret[i]),
+                        }
+                    )
+    return rows
+
+
+def train_gnn(config):
     set_seed(42)
+    device = get_device(config["training"]["device"])
+    use_cuda = device.type == "cuda"
+    print(f"[gnn] device={device}, cuda_available={torch.cuda.is_available()}")
+    rebuild = config.get("cache", {}).get("rebuild", False)
 
-    device = torch.device(
-        config["training"]["device"] if torch.cuda.is_available() else "cpu"
+    graph_flags = config.get("graph", {})
+    gr_cfg = config.get("granger", {})
+    make_undirected_cfg = graph_flags.get("make_undirected")
+    if make_undirected_cfg is None:
+        make_undirected_cfg = graph_flags.get("force_undirected")
+    if make_undirected_cfg is None:
+        make_undirected = not bool(graph_flags.get("use_granger", False))
+    else:
+        make_undirected = bool(make_undirected_cfg)
+    graph_directed = bool(graph_flags.get("use_granger", False) and not make_undirected)
+    cache_id = cache_key(
+        {
+            "model": config["model"],
+            "data": config["data"],
+            "preprocess": config.get("preprocess", {"scale_features": True, "scaler": "standard"}),
+            "graph": {
+                "use_corr": bool(graph_flags.get("use_corr", False)),
+                "use_sector": bool(graph_flags.get("use_sector", False)),
+                "use_granger": bool(graph_flags.get("use_granger", False)),
+                "corr_top_k": int(graph_flags.get("corr_top_k", 10)),
+                "corr_min_periods": int(graph_flags.get("corr_min_periods", 0)),
+                "make_undirected": make_undirected,
+            },
+            "granger": {
+                "max_lag": int(gr_cfg.get("max_lag", 2)),
+                "p_threshold": float(gr_cfg.get("p_threshold", 0.05)),
+            },
+        },
+        dataset_version="gnn_snapshots",
+        extra_files=[config["data"]["price_file"], "data/processed/universe.csv"],
     )
+    cache_file = cache_path("gnn_snapshots", cache_id)
 
-    snapshots, feat_cols, dates = _build_snapshots_and_targets(config)
+    if not rebuild:
+        cached = cache_load(cache_file)
+        if cached is not None:
+            snapshots, feat_cols, dates = cached["snapshots"], cached["feat_cols"], cached["dates"]
+            print(f"[gnn] loaded snapshots from cache {cache_file}")
+        else:
+            snapshots, feat_cols, dates = _build_snapshots_and_targets(config)
+            cache_save(cache_file, {"snapshots": snapshots, "feat_cols": feat_cols, "dates": dates, "graph_directed": graph_directed, "make_undirected": make_undirected})
+            print(f"[gnn] saved snapshots to cache {cache_file}")
+    else:
+        snapshots, feat_cols, dates = _build_snapshots_and_targets(config)
+        cache_save(cache_file, {"snapshots": snapshots, "feat_cols": feat_cols, "dates": dates, "graph_directed": graph_directed, "make_undirected": make_undirected})
+        print(f"[gnn] saved snapshots to cache {cache_file}")
+
+    graph_window = ""
+    try:
+        starts = [g.window_start for g in snapshots if hasattr(g, "window_start")]
+        ends = [g.window_end for g in snapshots if hasattr(g, "window_end")]
+        if starts and ends:
+            graph_window = f"{pd.to_datetime(min(starts)).date()}..{pd.to_datetime(max(ends)).date()}"
+    except Exception:
+        graph_window = ""
+
+    # Mandatory logging for defensibility: edge types enabled and snapshot stats
+    graph_cfg_print = config.get("graph", {})
+    use_corr = bool(graph_cfg_print.get("use_corr", False))
+    use_sector = bool(graph_cfg_print.get("use_sector", False))
+    use_granger = bool(graph_cfg_print.get("use_granger", False))
+    make_undirected_cfg = graph_cfg_print.get("make_undirected")
+    if make_undirected_cfg is None:
+        make_undirected_cfg = graph_cfg_print.get("force_undirected")
+    if make_undirected_cfg is None:
+        make_undirected = not use_granger
+    else:
+        make_undirected = bool(make_undirected_cfg)
+    graph_directed = bool(use_granger and not make_undirected)
+    # mean nodes/edges per snapshot
+    try:
+        node_counts = [g.x.shape[0] for g in snapshots]
+        edge_counts = [int(g.edge_index.shape[1]) for g in snapshots]
+        mean_nodes = float(np.mean(node_counts)) if node_counts else 0.0
+        mean_edges = float(np.mean(edge_counts)) if edge_counts else 0.0
+        print(f"[gnn] edge types enabled: use_corr={use_corr} use_sector={use_sector} use_granger={use_granger}")
+        print(f"[gnn] graph directed={graph_directed} make_undirected={make_undirected}")
+        print(f"[gnn] mean nodes per snapshot={mean_nodes:.1f}, mean directed edges per snapshot={mean_edges:.1f}")
+        # Compute mean degree (undirected) and max degree per node across snapshots
+        try:
+            mean_degrees = []
+            max_degrees = []
+            for g in snapshots:
+                if g.edge_index is None or g.edge_index.shape[1] == 0:
+                    mean_degrees.append(0.0)
+                    max_degrees.append(0)
+                    continue
+                ei = g.edge_index.cpu().numpy()
+                pairs = set()
+                for a, b in zip(ei[0].tolist(), ei[1].tolist()):
+                    pairs.add(tuple(sorted((int(a), int(b)))))
+                # build adjacency counts (exclude self-loops)
+                n = g.x.shape[0]
+                deg = [0] * n
+                for u, v in pairs:
+                    if u == v:
+                        continue
+                    deg[u] += 1
+                    deg[v] += 1
+                mean_degrees.append(float(np.mean(deg)))
+                max_degrees.append(int(np.max(deg) if deg else 0))
+            overall_mean_degree = float(np.mean(mean_degrees)) if mean_degrees else 0.0
+            overall_max_degree = int(np.max(max_degrees)) if max_degrees else 0
+            print(f"[gnn] mean degree per node (averaged across snapshots)={overall_mean_degree:.2f}, max degree per node (across snapshots)={overall_max_degree}")
+        except Exception:
+            pass
+        if use_granger:
+            try:
+                # compute granger edges count from train-only data for reporting
+                from utils.data_loading import load_price_panel
+                from utils.graphs import granger_edges
+                start = config["data"]["start_date"]
+                end = config["data"]["end_date"]
+                df_full = load_price_panel(config["data"]["price_file"], start, end)
+                df_full["date"] = pd.to_datetime(df_full["date"])
+                val_start = pd.to_datetime(config["training"]["val_start"])
+                train_mask = df_full["date"] < val_start
+                gr_edges = granger_edges(df_full.loc[train_mask], max_lag=int(config.get("granger", {}).get("max_lag", 2)), p_threshold=float(config.get("granger", {}).get("p_threshold", 0.05)))
+                gr_count = len(gr_edges) if gr_edges else 0
+                print(f"[gnn] granger edges (precomputed count): {gr_count}")
+            except Exception:
+                print("[gnn] Warning: failed to compute granger edge count for logging")
+    except Exception:
+        pass
+
+    # sanity checks
+    for name, lst in [("snapshots", snapshots)]:
+        for g in lst:
+            x_issues = check_tensor("x", g.x)
+            if "x: contains all-zero feature rows" in x_issues and hasattr(g, "valid_mask"):
+                zero_rows = (g.x.abs().sum(dim=-1) == 0)
+                invalid_rows = ~g.valid_mask.bool()
+                # Zero feature rows are expected for padded/unavailable tickers
+                # as long as those nodes are marked invalid.
+                if bool(torch.all((~zero_rows) | invalid_rows).item()):
+                    x_issues = [i for i in x_issues if i != "x: contains all-zero feature rows"]
+
+            issues = x_issues + check_tensor("y", g.y)
+            if issues:
+                raise ValueError(f"[gnn] Sanity failed: {'; '.join(issues)}")
+
+    debug = bool(config.get("debug", {}).get("leakage", False))
     train_snaps, val_snaps, test_snaps = _split_snapshots_by_date(
-        snapshots, dates, config["training"]["val_start"], config["training"]["test_start"]
+        snapshots, dates, config, label="gnn", debug=debug
     )
+
+    # Target scaling to avoid collapse to tiny constants
+    tgt_mean, tgt_std = _target_stats(train_snaps)
+    print(f"[gnn] target scaling mean={tgt_mean:.6f} std={tgt_std:.6f}")
 
     if not train_snaps:
-        raise ValueError(
-            "No training snapshots available. Check the date range and lookback window."
-        )
+        raise ValueError("No training snapshots available. Check the date range and lookback window.")
     if not val_snaps:
-        raise ValueError(
-            "No validation snapshots available. Adjust 'training.val_start'/'training.test_start'."
-        )
+        raise ValueError("No validation snapshots available. Adjust 'training.val_start'/'training.test_start'.")
 
-    train_loader = GeoDataLoader(
-        train_snaps,
-        batch_size=config["training"]["batch_size"],
-        shuffle=True,
-    )
-    val_loader = GeoDataLoader(val_snaps, batch_size=1, shuffle=False)
-    test_loader = GeoDataLoader(test_snaps, batch_size=1, shuffle=False)
+    bs = max(2, config["training"]["batch_size"])
+    num_workers = default_num_workers()
+    loader_kwargs = {
+        "batch_size": bs,
+        "shuffle": True,
+        "num_workers": num_workers,
+        "pin_memory": use_cuda,
+        "persistent_workers": num_workers > 0,
+    }
 
-    # Write outputs under evaluation.out_dir / model_name to avoid collisions
-    out_dir = Path(config["evaluation"]["out_dir"]) / config["model"]["type"]
+    train_loader = GeoDataLoader(train_snaps, **loader_kwargs)
+    val_loader = GeoDataLoader(val_snaps, **{**loader_kwargs, "shuffle": False})
+    test_loader = GeoDataLoader(test_snaps, **{**loader_kwargs, "shuffle": False})
+
+    out_dirs = resolve_output_dirs(config, model_type=config["model"]["type"])
+    out_dir = out_dirs.canonical
     out_dir.mkdir(parents=True, exist_ok=True)
-    loss_fn = torch.nn.MSELoss()
-    hidden_candidates = config["model"].get("hidden_dim_candidates", [32, 64])
-    hidden_candidates = list(dict.fromkeys(hidden_candidates))
-    num_layers = 1  # force shallow GNN to reduce over-smoothing
+    model_path = out_dir / f"best_{config['model']['type']}.pt"
+    legacy_model_path = None
+    if out_dirs.legacy is not None:
+        legacy_model_path = out_dirs.legacy / f"best_{config['model']['type']}.pt"
 
-    patience_cfg = config["training"]["patience"]
-    patience = max(patience_cfg * 2, patience_cfg + 20)
-    min_epochs = config["training"].get("min_epochs", patience)
-    max_epochs = config["training"]["max_epochs"]
+    skip_training = bool(config["training"].get("skip_training_if_checkpoint", False))
+    checkpoint_to_load = model_path
+    if skip_training and not model_path.exists() and legacy_model_path is not None and legacy_model_path.exists():
+        checkpoint_to_load = legacy_model_path
 
-    best_overall_val = float("inf")
-    best_state = None
-    best_hidden = None
+    def _infer_num_layers_from_state_dict(state_dict):
+        idxs = set()
+        for key in state_dict.keys():
+            if not key.startswith("convs."):
+                continue
+            parts = key.split(".")
+            if len(parts) > 1 and parts[1].isdigit():
+                idxs.add(int(parts[1]))
+        return (max(idxs) + 1) if idxs else None
 
-    heads_cfg = config["model"].get("heads", 1)
+    def _infer_heads_from_state_dict(state_dict):
+        # GAT params usually store attention tensors as [1, heads, hidden].
+        key = "convs.0.att_src"
+        if key not in state_dict:
+            return None
+        tensor = state_dict.get(key)
+        if tensor is None or getattr(tensor, "ndim", 0) < 2:
+            return None
+        return int(tensor.shape[1])
 
-    for hidden_dim in hidden_candidates:
-        print(f"[{config['model']['type'].upper()}] training candidate hidden_dim={hidden_dim}")
-        model = StaticGNN(
-            gnn_type=config["model"]["type"],
-            input_dim=len(feat_cols),
-            hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            dropout=config["model"]["dropout"],
-            heads=heads_cfg,
-        ).to(device)
+    def _infer_hidden_dim_from_state_dict(state_dict):
+        # Prefer explicit head input dimension if present.
+        if "head.weight" in state_dict:
+            w = state_dict["head.weight"]
+            if getattr(w, "ndim", 0) == 2 and int(w.shape[1]) > 0:
+                return int(w.shape[1])
+        # GAT stores per-head hidden in attention tensors.
+        if "convs.0.att_src" in state_dict:
+            t = state_dict["convs.0.att_src"]
+            if getattr(t, "ndim", 0) == 3 and int(t.shape[2]) > 0:
+                return int(t.shape[2])
+        # Fallback for GCN-like checkpoints.
+        if "convs.0.bias" in state_dict:
+            b = state_dict["convs.0.bias"]
+            if getattr(b, "ndim", 0) == 1 and int(b.shape[0]) > 0:
+                return int(b.shape[0])
+        return None
 
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=config["training"]["lr"],
-            weight_decay=config["training"]["weight_decay"],
+    requested_layers = int(config["model"].get("num_layers", 1))
+    requested_hidden_dim = int(config["model"].get("hidden_dim", 64))
+    requested_heads = int(config["model"].get("heads", 1))
+    model_type = config["model"]["type"].lower()
+    model_label = model_type
+    if model_type == "tgcn":
+        print("[gnn] Warning: 'tgcn' runs a static TGCN cell (no temporal state). Use type 'tgcn_static'.")
+        model_label = "tgcn_static"
+    elif model_type == "tgat":
+        print("[gnn] Warning: 'tgat' runs a static GAT baseline (no temporal attention). Use type 'tgat_static'.")
+        model_label = "tgat_static"
+
+    base_dropout = float(config["model"].get("dropout", 0.0))
+    if model_type == "gcn" and base_dropout <= 0.0:
+        print("[gnn] Warning: forcing non-zero dropout=0.2 for GCN to reduce oversmoothing")
+        base_dropout = 0.2
+    base_attn_dropout = float(config["model"].get("attn_dropout", base_dropout))
+    base_lr = float(config["training"].get("lr", 1e-3))
+    base_weight_decay = float(config["training"].get("weight_decay", 0.0))
+    base_gradient_clip = float(config["training"].get("gradient_clip", 1.0))
+    max_epochs = int(config["training"]["max_epochs"])
+    patience = int(config["training"]["patience"])
+    tgt_mean_t = torch.tensor(tgt_mean, device=device)
+    tgt_std_t = torch.tensor(tgt_std, device=device)
+
+    if skip_training and checkpoint_to_load.exists():
+        try:
+            state_hint = torch.load(checkpoint_to_load, map_location="cpu")
+            inferred = _infer_num_layers_from_state_dict(state_hint)
+            if inferred is not None and inferred != requested_layers:
+                print(
+                    f"[gnn] using checkpoint-inferred num_layers={inferred} "
+                    f"(config requested {requested_layers})"
+                )
+                requested_layers = int(inferred)
+            inferred_heads = _infer_heads_from_state_dict(state_hint)
+            if inferred_heads is not None and inferred_heads != requested_heads:
+                print(
+                    f"[gnn] using checkpoint-inferred heads={inferred_heads} "
+                    f"(config requested {requested_heads})"
+                )
+                requested_heads = int(inferred_heads)
+            inferred_hidden = _infer_hidden_dim_from_state_dict(state_hint)
+            if inferred_hidden is not None and inferred_hidden != requested_hidden_dim:
+                print(
+                    f"[gnn] using checkpoint-inferred hidden_dim={inferred_hidden} "
+                    f"(config requested {requested_hidden_dim})"
+                )
+                requested_hidden_dim = int(inferred_hidden)
+        except Exception as exc:
+            print(f"[gnn] Warning: failed to infer num_layers from checkpoint: {exc}")
+
+    def _build_model_instance(
+        *,
+        hidden_dim: int,
+        num_layers: int,
+        dropout: float,
+        attn_dropout: float,
+        heads: int,
+        emit_warnings: bool = True,
+    ):
+        local_num_layers = max(1, min(int(num_layers), 3))
+        if model_type == "gcn" and int(num_layers) > 2 and emit_warnings:
+            print("[gnn] Warning: GCN depth >2 can over-smooth; clamping to at most 3 layers.")
+        local_dropout = float(dropout)
+        if model_type == "gcn" and local_dropout <= 0.0:
+            if emit_warnings:
+                print("[gnn] Warning: forcing non-zero dropout=0.2 for GCN to reduce oversmoothing")
+            local_dropout = 0.2
+        local_attn_dropout = float(attn_dropout)
+        mtype = model_label
+        if mtype == "tgcn_static":
+            if StaticTGCN is None:
+                raise RuntimeError("TGCN model support is unavailable (missing dependency).")
+            mdl = StaticTGCN(
+                input_dim=len(feat_cols),
+                hidden_dim=int(hidden_dim),
+                dropout=local_dropout,
+            ).to(device)
+        elif mtype == "tgat_static":
+            if StaticTGAT is None:
+                raise RuntimeError("TGAT model support is unavailable (missing dependency).")
+            mdl = StaticTGAT(
+                input_dim=len(feat_cols),
+                hidden_dim=int(hidden_dim),
+                num_layers=int(num_layers),
+                heads=int(heads),
+                dropout=local_dropout,
+            ).to(device)
+        else:
+            mdl = StaticGNN(
+                gnn_type=model_type,
+                input_dim=len(feat_cols),
+                hidden_dim=int(hidden_dim),
+                num_layers=local_num_layers,
+                dropout=local_dropout,
+                attn_dropout=local_attn_dropout,
+                heads=int(heads),
+                use_residual=True,
+            ).to(device)
+        if emit_warnings:
+            try:
+                if model_type in {"gat", "tgat_static"} and (use_corr or use_sector or use_granger):
+                    print(
+                        "[gnn] Warning: model GAT ignores edge weights provided in `edge_weight`.\n"
+                        "If you rely on weighting, consider using GCN or implementing weighted attention."
+                    )
+            except Exception:
+                pass
+        return mdl
+
+    tuning_cfg = config.get("tuning", {})
+    use_tuning = bool(tuning_cfg.get("enabled", False))
+    if skip_training and use_tuning:
+        print("[gnn] Warning: tuning.enabled ignored because skip_training_if_checkpoint=true")
+        use_tuning = False
+
+    selected_hidden_dim = int(requested_hidden_dim)
+    selected_layers = int(requested_layers)
+    selected_dropout = float(base_dropout)
+    selected_attn_dropout = float(base_attn_dropout)
+    selected_heads = int(requested_heads)
+    lr_val = float(base_lr)
+    weight_decay_val = float(base_weight_decay)
+    gradient_clip_val = float(base_gradient_clip)
+
+    if use_tuning:
+        objective = str(tuning_cfg.get("objective", "val_rmse"))
+        sample_mode = str(tuning_cfg.get("sample_mode", "grid"))
+        max_trials = int(tuning_cfg.get("max_trials", 0) or 0)
+        tuning_seed = int(tuning_cfg.get("seed", config.get("seed", 42)))
+        tune_max_epochs = int(tuning_cfg.get("tune_max_epochs", min(15, max_epochs)))
+        tune_patience = int(tuning_cfg.get("tune_patience", max(2, min(6, patience))))
+        fixed_tune_params = {
+            "hidden_dim": selected_hidden_dim,
+            "num_layers": selected_layers,
+            "dropout": selected_dropout,
+            "attn_dropout": selected_attn_dropout,
+            "heads": selected_heads,
+            "lr": lr_val,
+            "weight_decay": weight_decay_val,
+            "gradient_clip": gradient_clip_val,
+        }
+        param_grid = tuning_cfg.get("param_grid", {})
+        candidates = enumerate_param_candidates(
+            fixed_params=fixed_tune_params,
+            param_grid=param_grid,
+            sample_mode=sample_mode,
+            max_trials=max_trials,
+            seed=tuning_seed,
+        )
+        print(
+            f"[gnn] tuning: objective={objective} sample_mode={sample_mode} "
+            f"candidates={len(candidates)}"
         )
 
-        best_val = float("inf")
-        bad_epochs = 0
-        best_state_candidate = None
+        best_score = float("-inf")
+        best_params = None
+        eval_cfg = config.get("evaluation", {})
+        for params in candidates:
+            cand_hidden = int(params.get("hidden_dim", selected_hidden_dim))
+            cand_layers = int(params.get("num_layers", selected_layers))
+            cand_dropout = float(params.get("dropout", selected_dropout))
+            cand_attn_dropout = float(params.get("attn_dropout", cand_dropout))
+            cand_heads = int(params.get("heads", selected_heads))
+            cand_lr = float(params.get("lr", lr_val))
+            cand_wd = float(params.get("weight_decay", weight_decay_val))
+            cand_clip = float(params.get("gradient_clip", gradient_clip_val))
 
+            tune_model = _build_model_instance(
+                hidden_dim=cand_hidden,
+                num_layers=cand_layers,
+                dropout=cand_dropout,
+                attn_dropout=cand_attn_dropout,
+                heads=cand_heads,
+                emit_warnings=False,
+            )
+            tune_optimizer = torch.optim.Adam(tune_model.parameters(), lr=cand_lr, weight_decay=cand_wd)
+            tune_scaler = GradScaler(enabled=use_cuda)
+            local_best_val = float("inf")
+            local_bad_epochs = 0
+            best_state = None
+
+            for _ in range(tune_max_epochs):
+                tune_model.train()
+                for batch in train_loader:
+                    batch = batch.to(device, non_blocking=True)
+                    tune_optimizer.zero_grad()
+                    with amp.autocast(device_type="cuda", enabled=use_cuda):
+                        logits = tune_model(batch.x, batch.edge_index, batch.edge_weight)
+                        mask = batch.valid_mask & torch.isfinite(batch.y)
+                        if mask.sum() == 0:
+                            continue
+                        target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                        loss = torch.nn.functional.mse_loss(logits[mask], target_scaled[mask])
+                    tune_scaler.scale(loss).backward()
+                    torch.nn.utils.clip_grad_norm_(tune_model.parameters(), cand_clip)
+                    tune_scaler.step(tune_optimizer)
+                    tune_scaler.update()
+
+                tune_model.eval()
+                val_losses = []
+                with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
+                    for batch in val_loader:
+                        batch = batch.to(device, non_blocking=True)
+                        logits = tune_model(batch.x, batch.edge_index, batch.edge_weight)
+                        mask = batch.valid_mask & torch.isfinite(batch.y)
+                        if mask.sum() == 0:
+                            continue
+                        target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                        loss = torch.nn.functional.mse_loss(logits[mask], target_scaled[mask])
+                        val_losses.append(loss.detach())
+                mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("inf")
+                if mean_val < local_best_val:
+                    local_best_val = mean_val
+                    local_bad_epochs = 0
+                    best_state = {k: v.detach().cpu().clone() for k, v in tune_model.state_dict().items()}
+                else:
+                    local_bad_epochs += 1
+                    if local_bad_epochs >= tune_patience:
+                        break
+
+            if best_state is not None:
+                tune_model.load_state_dict(best_state)
+            val_rows = _collect_prediction_rows(
+                tune_model,
+                val_loader,
+                device=device,
+                tgt_mean_t=tgt_mean_t,
+                tgt_std_t=tgt_std_t,
+                use_cuda=use_cuda,
+            )
+            if not val_rows:
+                score_payload = {"score": float("-inf"), "metric_name": "none", "metric_value": float("nan")}
+            else:
+                val_df = pd.DataFrame(val_rows)
+                score_payload = score_prediction_objective(
+                    objective=objective,
+                    y_true=val_df["realized_ret"].to_numpy(),
+                    preds=val_df["pred"].to_numpy(),
+                    dates=val_df["date"].to_numpy(),
+                    tickers=val_df["ticker"].to_numpy(),
+                    top_k=int(eval_cfg.get("top_k", 20)),
+                    transaction_cost_bps=float(eval_cfg.get("transaction_cost_bps", 5.0)),
+                    risk_free_rate=float(eval_cfg.get("risk_free_rate", 0.0)),
+                    rebalance_freq=int(eval_cfg.get("primary_rebalance_freq", 1)),
+                )
+            metric_name = score_payload["metric_name"]
+            metric_value = score_payload["metric_value"]
+            score = score_payload["score"]
+            print("Params", params, metric_name, metric_value, "score", score)
+            if score > best_score:
+                best_score = score
+                best_params = dict(params)
+
+        if best_params is not None:
+            selected_hidden_dim = int(best_params.get("hidden_dim", selected_hidden_dim))
+            selected_layers = int(best_params.get("num_layers", selected_layers))
+            selected_dropout = float(best_params.get("dropout", selected_dropout))
+            selected_attn_dropout = float(best_params.get("attn_dropout", selected_attn_dropout))
+            selected_heads = int(best_params.get("heads", selected_heads))
+            lr_val = float(best_params.get("lr", lr_val))
+            weight_decay_val = float(best_params.get("weight_decay", weight_decay_val))
+            gradient_clip_val = float(best_params.get("gradient_clip", gradient_clip_val))
+        print("[gnn] best tuning params:", best_params, "best_score", best_score)
+    print(
+        f"[gnn] selected params: hidden_dim={selected_hidden_dim} num_layers={selected_layers} "
+        f"dropout={selected_dropout} heads={selected_heads} lr={lr_val} "
+        f"weight_decay={weight_decay_val}"
+    )
+
+    model = _build_model_instance(
+        hidden_dim=selected_hidden_dim,
+        num_layers=selected_layers,
+        dropout=selected_dropout,
+        attn_dropout=selected_attn_dropout,
+        heads=selected_heads,
+        emit_warnings=True,
+    )
+
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=lr_val,
+        weight_decay=weight_decay_val,
+    )
+    loss_fn = torch.nn.MSELoss()
+    scaler = GradScaler(enabled=use_cuda)
+
+    best_val = float("inf")
+    bad_epochs = 0
+
+    if skip_training:
+        if not model_path.exists() and legacy_model_path is not None and legacy_model_path.exists():
+            checkpoint_to_load = legacy_model_path
+        if not checkpoint_to_load.exists():
+            raise RuntimeError(
+                "skip_training_if_checkpoint=true but no checkpoint found. "
+                f"Tried '{model_path}'"
+                + (f" and '{legacy_model_path}'" if legacy_model_path is not None else "")
+            )
+        print(f"[gnn] skipping training and loading checkpoint: {checkpoint_to_load}")
+        train_seconds = 0.0
+    else:
+        train_start = time.time()
         for epoch in range(max_epochs):
             model.train()
             train_losses = []
-
+            t0 = time.time()
             for batch in train_loader:
-                batch = batch.to(device)
+                batch = batch.to(device, non_blocking=True)
                 optimizer.zero_grad()
-                logits = model(batch.x, batch.edge_index, batch.edge_weight)
-
-                # simple mask: only finite labels
-                mask = batch.valid_mask & torch.isfinite(batch.y)
-                if mask.sum() == 0:
-                    continue
-
-                loss = loss_fn(logits[mask], batch.y[mask])
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    config["training"]["gradient_clip"],
-                )
-                optimizer.step()
-                train_losses.append(loss.item())
-
-            model.eval()
-            val_losses = []
-            with torch.no_grad():
-                for batch in val_loader:
-                    batch = batch.to(device)
+                with amp.autocast(device_type="cuda", enabled=use_cuda):
                     logits = model(batch.x, batch.edge_index, batch.edge_weight)
                     mask = batch.valid_mask & torch.isfinite(batch.y)
                     if mask.sum() == 0:
                         continue
-                    loss = loss_fn(logits[mask], batch.y[mask])
-                    val_losses.append(loss.item())
+                    target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                    loss = loss_fn(logits[mask], target_scaled[mask])
+                scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip_val)
+                scaler.step(optimizer)
+                scaler.update()
+                train_losses.append(loss.detach())
+            compute_time = time.time() - t0
 
-            mean_train = float(np.mean(train_losses)) if train_losses else float("nan")
-            mean_val = float(np.mean(val_losses)) if val_losses else float("nan")
-            print(f"[{config['model']['type'].upper()}-{hidden_dim}] epoch {epoch} train {mean_train:.5f} val {mean_val:.5f}")
+            model.eval()
+            val_losses = []
+            with torch.no_grad(), amp.autocast(device_type="cuda", enabled=use_cuda):
+                for batch in val_loader:
+                    batch = batch.to(device, non_blocking=True)
+                    logits = model(batch.x, batch.edge_index, batch.edge_weight)
+                    mask = batch.valid_mask & torch.isfinite(batch.y)
+                    if mask.sum() == 0:
+                        continue
+                    target_scaled = (batch.y - tgt_mean_t) / tgt_std_t
+                    loss = loss_fn(logits[mask], target_scaled[mask])
+                    val_losses.append(loss.detach())
+
+            mean_train = float(torch.stack(train_losses).mean().item()) if train_losses else float("nan")
+            mean_val = float(torch.stack(val_losses).mean().item()) if val_losses else float("nan")
+            print(f"[{config['model']['type'].upper()}] epoch {epoch} train {mean_train:.5f} val {mean_val:.5f} (compute {compute_time:.2f}s)")
 
             if np.isfinite(mean_val) and mean_val < best_val:
                 best_val = mean_val
                 bad_epochs = 0
-                best_state_candidate = {k: v.cpu() for k, v in model.state_dict().items()}
+                torch.save(model.state_dict(), model_path)
             else:
                 bad_epochs += 1
-                if (epoch + 1) >= min_epochs and bad_epochs >= patience:
-                    print(f"[{config['model']['type'].upper()}-{hidden_dim}] Early stopping")
+                if bad_epochs >= patience:
+                    print("Early stopping")
                     break
+        train_seconds = time.time() - train_start
 
-        if best_state_candidate is not None and best_val < best_overall_val:
-            best_overall_val = best_val
-            best_state = best_state_candidate
-            best_hidden = hidden_dim
+        if not model_path.exists():
+            raise RuntimeError(f"No checkpoint saved to '{model_path}'. Validation never produced a usable batch.")
 
-    if best_state is None:
-        raise RuntimeError("No checkpoint saved; validation never produced a usable batch.")
+        checkpoint_to_load = model_path
 
-    # rebuild best model
-    model = StaticGNN(
-        gnn_type=config["model"]["type"],
-        input_dim=len(feat_cols),
-        hidden_dim=best_hidden,
-        num_layers=num_layers,
-        dropout=config["model"]["dropout"],
-        heads=heads_cfg,
-    ).to(device)
-    model.load_state_dict(best_state)
+    model.load_state_dict(torch.load(checkpoint_to_load, map_location=device))
     model.eval()
 
-    # test predictions and backtest
-    rows = []
-    with torch.no_grad():
-        for batch in test_loader:
-            batch = batch.to(device)
-            logits = model(batch.x, batch.edge_index, batch.edge_weight)
-            pred = logits.cpu().numpy()
-            y_ret = batch.y.cpu().numpy()
-            valid = batch.valid_mask.cpu().numpy()
-            tickers_raw = batch.tickers
-
-            if isinstance(tickers_raw, list) and len(tickers_raw) > 0:
-                if isinstance(tickers_raw[0], str):
-                    tickers = tickers_raw
-                elif isinstance(tickers_raw[0], list):
-                    tickers = tickers_raw[0]
-                else:
-                    tickers = [str(x) for x in tickers_raw]
-            else:
-                tickers = list(tickers_raw)
-
-            # safely extract scalar date for grouping
-            d = batch.date
-            if isinstance(d, (list, np.ndarray, pd.DatetimeIndex)):
-                d = d[0]
-            d = pd.to_datetime(d)
-
-            for i, t in enumerate(tickers):
-                if not valid[i] or not np.isfinite(y_ret[i]):
-                    continue
-                rows.append({
-                    "date": d,
-                    "ticker": t,
-                    "pred": float(pred[i]),
-                    "realized_ret": float(y_ret[i]),
-                })
-
+    infer_start = time.time()
+    rows = _collect_prediction_rows(
+        model,
+        test_loader,
+        device=device,
+        tgt_mean_t=tgt_mean_t,
+        tgt_std_t=tgt_std_t,
+        use_cuda=use_cuda,
+    )
+    inference_seconds = time.time() - infer_start
 
     pred_df = pd.DataFrame(rows)
+    pred_df = sanitize_predictions(pred_df, strict_unique=True)
     pred_df.to_csv(out_dir / f"{config['model']['type']}_predictions.csv", index=False)
-
-    # Diagnostic: check per-day prediction diversity
-    pred_counts = pred_df.groupby("date")["pred"].nunique()
-    low_var_days = pred_counts[pred_counts < 2]
-    if not low_var_days.empty:
-        print(f"[{config['model']['type'].upper()}] Warning: {len(low_var_days)} days with constant predictions")
-        low_var_days.to_frame("unique_preds").reset_index().to_csv(
-            out_dir / f"{config['model']['type']}_constant_pred_days.csv",
-            index=False,
-        )
-
-    daily_metrics = []
-    for d, g in pred_df.groupby("date"):
-        ic = rank_ic(g["pred"], g["realized_ret"])
-        hit = hit_rate(g["pred"], g["realized_ret"], top_k=config["evaluation"]["top_k"])
-        daily_metrics.append({"date": d, "ic": ic, "hit": hit})
-    daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
-    daily_metrics.to_csv(out_dir / f"{config['model']['type']}_daily_metrics.csv", index=False)
-
-    ic_path = out_dir / f"{config['model']['type']}_ic_timeseries.png"
-    ic_hist_path = out_dir / f"{config['model']['type']}_ic_histogram.png"
-    if daily_metrics["ic"].notna().any():
-        plot_daily_ic(daily_metrics, ic_path)
-        plot_ic_hist(daily_metrics, ic_hist_path)
-        print(f"[{config['model']['type'].upper()}] Saved IC plots: {ic_path}, {ic_hist_path}")
-    else:
-        print(f"[{config['model']['type'].upper()}] Skipping IC plots (all IC values NaN)")
-
-    print(
-        f"{config['model']['type'].upper()} mean IC",
-        daily_metrics["ic"].mean(),
-        "mean hit",
-        daily_metrics["hit"].mean(),
+    summary = evaluate_and_report(
+        config=config,
+        pred_df=pred_df,
+        out_dirs=out_dirs,
+        run_name=model_label,
+        model_name=model_label,
+        model_family=config["model"]["family"],
+        edge_type=edge_type_from_graph_cfg(graph_cfg_print),
+        directed=graph_directed,
+        graph_window=graph_window,
+        train_seconds=train_seconds,
+        inference_seconds=inference_seconds,
+        extra_summary={
+            "graph_directed": graph_directed,
+            "graph_make_undirected": make_undirected,
+        },
     )
-
-    equity_curve, daily_ret, stats = backtest_long_only(
-        pred_df,
-        top_k=config["evaluation"]["top_k"],
-        transaction_cost_bps=config["evaluation"]["transaction_cost_bps"],
-        risk_free_rate=config["evaluation"]["risk_free_rate"],
-    )
-    eq_path = out_dir / f"{config['model']['type']}_equity_curve.png"
-    equity_curve.to_csv(out_dir / f"{config['model']['type']}_equity_curve.csv", header=["value"])
-    plot_equity_curve(
-        equity_curve,
-        f"{config['model']['type'].upper()} long only",
-        eq_path,
-    )
-    print(f"[{config['model']['type'].upper()}] Saved equity curve to {eq_path}")
-
-    # Buy-and-hold baseline for the same window
-    bh_df = pred_df[["date", "ticker", "realized_ret"]].rename(columns={"realized_ret": "log_ret_1d"})
-    eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
-        bh_df,
-        risk_free_rate=config["evaluation"]["risk_free_rate"],
-    )
-    bh_path = out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.png"
-    eq_bh.to_csv(out_dir / f"{config['model']['type']}_buy_and_hold_equity_curve.csv", header=["value"])
-    plot_equity_curve(
-        eq_bh,
-        "Buy and Hold",
-        bh_path,
-    )
-    print(f"[{config['model']['type'].upper()}] Saved buy-and-hold curve to {bh_path}")
-
-    # Combined comparison plot
-    comp_path = out_dir / f"{config['model']['type']}_equity_comparison.png"
-    plot_equity_comparison(
-        model_curve=equity_curve,
-        bh_curve=eq_bh,
-        title=f"{config['model']['type'].upper()} vs Buy and Hold",
-        out_path=comp_path,
-    )
-    print(f"[{config['model']['type'].upper()}] Saved equity comparison to {comp_path}")
-
-    print(f"{config['model']['type'].upper()} backtest stats", stats)
-    print("Buy-and-hold stats", stats_bh)
-
-
-# 2. Training for temporal TGCN
-def _train_tgcn(config):
-    """
-    Temporal training using TGCN over a time ordered sequence of daily graphs.
-    """
-
-    from models.tgcn_model import TemporalGCNModel
-
-    set_seed(42)
-
-    device = torch.device(
-        config["training"]["device"] if torch.cuda.is_available() else "cpu"
-    )
-
-    snapshots, feat_cols, dates = _build_snapshots_and_targets(config)
-
-    # snapshots and dates are already aligned in time order
-    train_snaps, val_snaps, test_snaps = _split_snapshots_by_date(
-        snapshots, dates,
-        config["training"]["val_start"],
-        config["training"]["test_start"],
-    )
-
-    if not train_snaps:
-        raise ValueError("No training snapshots for TGCN. Adjust date range.")
-    if not val_snaps:
-        raise ValueError("No validation snapshots for TGCN. Adjust val_start or test_start.")
-
-    model = TemporalGCNModel(
-        input_dim=len(feat_cols),
-        hidden_dim=config["model"]["hidden_dim"],
-        dropout=config["model"]["dropout"],
-    ).to(device)
-
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=config["training"]["lr"],
-        weight_decay=config["training"]["weight_decay"],
-    )
-    loss_fn = torch.nn.MSELoss()
-
-    best_val = float("inf")
-    bad_epochs = 0
-    patience = config["training"]["patience"]
-
-    out_dir = Path(config["evaluation"]["out_dir"]) / config["model"]["type"]
-    out_dir.mkdir(parents=True, exist_ok=True)
-    model_path = out_dir / "best_tgcn.pt"
-
-    # ---------------- TRAINING LOOP ----------------
-    for epoch in range(config["training"]["max_epochs"]):
-        model.train()
-        train_losses = []
-
-        # reset hidden state at start of each epoch
-        h = None
-
-        for g in train_snaps:
-            g = g.to(device)
-            optimizer.zero_grad()
-
-            logits, h = model(g.x, g.edge_index, g.edge_weight, h)
-            h = h.detach()
-
-            mask = g.valid_mask & torch.isfinite(g.y)
-            if mask.sum() == 0:
-                continue
-
-            loss = loss_fn(logits[mask], g.y[mask])
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
-                config["training"]["gradient_clip"],
-            )
-            optimizer.step()
-
-            train_losses.append(loss.item())
-
-        # ---------------- VALIDATION ----------------
-        model.eval()
-        val_losses = []
-        with torch.no_grad():
-            h_val = None
-            for g in val_snaps:
-                g = g.to(device)
-                logits, h_val = model(g.x, g.edge_index, g.edge_weight, h_val)
-                h_val = h_val.detach()
-                mask = g.valid_mask & torch.isfinite(g.y)
-                if mask.sum() == 0:
-                    continue
-                loss = loss_fn(logits[mask], g.y[mask])
-                val_losses.append(loss.item())
-
-        mean_train = float(np.mean(train_losses)) if train_losses else float("nan")
-        mean_val = float(np.mean(val_losses)) if val_losses else float("nan")
-        print(f"[TGCN] epoch {epoch} train {mean_train:.5f} val {mean_val:.5f}")
-
-        if np.isfinite(mean_val) and mean_val < best_val:
-            best_val = mean_val
-            bad_epochs = 0
-            torch.save(model.state_dict(), model_path)
-        else:
-            bad_epochs += 1
-            if bad_epochs >= patience:
-                print("Early stopping")
-                break
-
-    if not model_path.exists():
-        raise RuntimeError("TGCN saved no model. Validation may be empty.")
-
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-
-    # ---------------- TEST, PREDICTIONS, BACKTEST ----------------
-    rows = []
-    with torch.no_grad():
-        h_test = None
-        for g in test_snaps:
-            g = g.to(device)
-
-            logits, h_test = model(g.x, g.edge_index, g.edge_weight, h_test)
-            h_test = h_test.detach()
-            pred = logits.cpu().numpy()
-            y_realized = g.y.cpu().numpy()
-            valid = g.valid_mask.cpu().numpy()
-            tickers = g.tickers
-            d = pd.to_datetime(g.date)
-
-            for i, t in enumerate(tickers):
-                if not valid[i] or not np.isfinite(y_realized[i]):
-                    continue
-                rows.append(
-                    {
-                        "date": d,
-                        "ticker": t,
-                        "pred": float(pred[i]),
-                        "realized_ret": float(y_realized[i]),
-                    }
-                )
-
-    pred_df = pd.DataFrame(rows)
-    pred_df.to_csv(out_dir / "tgcn_predictions.csv", index=False)
-
-    # IC and hit rate
-    daily_metrics = []
-    for d, g in pred_df.groupby("date"):
-        g = g.replace([np.inf, -np.inf], np.nan).dropna(subset=["pred", "realized_ret"])
-
-        if g["pred"].nunique() < 2 or g["realized_ret"].nunique() < 2:
-            ic = np.nan
-        else:
-            ic = rank_ic(g["pred"], g["realized_ret"])
-
-        hit = hit_rate(g["pred"], g["realized_ret"], top_k=config["evaluation"]["top_k"])
-        daily_metrics.append({"date": d, "ic": ic, "hit": hit})
-
-    daily_metrics = pd.DataFrame(daily_metrics).sort_values("date")
-    mean_ic = daily_metrics["ic"].dropna().mean()
-    mean_hit = daily_metrics["hit"].dropna().mean()
-
-    daily_metrics.to_csv(out_dir / "tgcn_daily_metrics.csv", index=False)
-    ic_path = out_dir / "tgcn_ic_timeseries.png"
-    ic_hist_path = out_dir / "tgcn_ic_histogram.png"
-    if daily_metrics["ic"].notna().any():
-        plot_daily_ic(daily_metrics, ic_path)
-        plot_ic_hist(daily_metrics, ic_hist_path)
-        print(f"[TGCN] Saved IC plots: {ic_path}, {ic_hist_path}")
-    else:
-        print("[TGCN] Skipping IC plots (all IC values NaN)")
-    print("TGCN mean IC", mean_ic)
-    print("TGCN mean hit", mean_hit)
-
-    curve, daily_ret, stats = backtest_long_only(
-        pred_df,
-        top_k=config["evaluation"]["top_k"],
-        transaction_cost_bps=config["evaluation"]["transaction_cost_bps"],
-        risk_free_rate=config["evaluation"]["risk_free_rate"],
-    )
-    curve.to_csv(out_dir / "tgcn_equity_curve.csv", header=["value"])
-    plot_equity_curve(
-        curve,
-        "TGCN long only",
-        out_dir / "tgcn_equity_curve.png",
-    )
-    print(f"[TGCN] Saved equity curve to {out_dir / 'tgcn_equity_curve.png'}")
-
-    bh_df = pred_df[["date", "ticker", "realized_ret"]].rename(columns={"realized_ret": "log_ret_1d"})
-    eq_bh, ret_bh, stats_bh = backtest_buy_and_hold(
-        bh_df,
-        risk_free_rate=config["evaluation"]["risk_free_rate"],
-    )
-    eq_bh.to_csv(out_dir / "tgcn_buy_and_hold_equity_curve.csv", header=["value"])
-    plot_equity_curve(
-        eq_bh,
-        "Buy and Hold",
-        out_dir / "tgcn_buy_and_hold_equity_curve.png",
-    )
-    print(f"[TGCN] Saved buy-and-hold curve to {out_dir / 'tgcn_buy_and_hold_equity_curve.png'}")
-
-    plot_equity_comparison(
-        model_curve=curve,
-        bh_curve=eq_bh,
-        title="TGCN vs Buy and Hold",
-        out_path=out_dir / "tgcn_equity_comparison.png",
-    )
-    print(f"[TGCN] Saved equity comparison to {out_dir / 'tgcn_equity_comparison.png'}")
-
-    print("TGCN backtest stats", stats)
-    print("Buy-and-hold stats", stats_bh)
-
-
-# public entry from train.py
-def train_gnn(config):
-    gnn_type = config["model"]["type"].lower()
-    if gnn_type in {"gcn", "gat"}:
-        _train_static_gnn(config)
-    elif gnn_type == "tgcn":
-        _train_tgcn(config)
-    else:
-        raise ValueError(f"Unknown gnn type {gnn_type}")
+    print(f"{config['model']['type'].upper()} primary policy stats", summary.get("stats", {}))

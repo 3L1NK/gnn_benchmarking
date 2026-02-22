@@ -1,0 +1,16 @@
+experiment_name: gcn
+
+model:
+  family: gnn
+  type: gcn
+  hidden_dim_candidates: [32, 64]
+  hidden_dim: 64
+  num_layers: 1
+  dropout: 0.1
+
+include: "configs/default.yaml"
+
+data:
+  target_horizon: 1  # daily horizon for consistent labels
+  target_type: regression
+  target_name: log_return

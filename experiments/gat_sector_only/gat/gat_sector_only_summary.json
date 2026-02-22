@@ -1,0 +1,114 @@
+{
+  "run_tag": "gat_sector_only",
+  "model_type": "gat",
+  "protocol_version": "v1_thesis_core",
+  "target_policy_hash": "92b426b26106",
+  "stats": {
+    "final_value": 1.3800954592179988,
+    "cumulative_return": 0.3950156933147524,
+    "annualized_return": 0.06907434379702537,
+    "annualized_volatility": 0.2033906770355282,
+    "max_drawdown": -0.3178457369896752,
+    "sharpe": 0.026428433700277965,
+    "sortino": 0.032871595743633825,
+    "avg_turnover": 0.5568471337579619
+  },
+  "buy_and_hold_stats": {
+    "final_value": 5.049288556044275,
+    "cumulative_return": 4.049288556044275,
+    "annualized_return": 0.3842240191009789,
+    "annualized_volatility": 0.3023422915663287,
+    "max_drawdown": -0.3471179958366627,
+    "sharpe": 0.07731121211800307,
+    "sortino": 0.10941253737924157
+  },
+  "equal_weight_stats": {
+    "final_value": 2.0221621477103713,
+    "cumulative_return": 1.0221621477103713,
+    "annualized_return": 0.1518790337272664,
+    "annualized_volatility": 0.21458010018431448,
+    "max_drawdown": -0.3464553449053246,
+    "sharpe": 0.048298077100140946,
+    "sortino": 0.05875875777239032
+  },
+  "ic_mean": -0.002028222565600321,
+  "ic_tstat": -0.2864095131593986,
+  "volatility": 0.2033096932867333,
+  "max_drawdown": -0.3178457369896752,
+  "stats_by_rebalance_freq": {
+    "1": {
+      "stats": {
+        "final_value": 1.3800954592179988,
+        "cumulative_return": 0.3950156933147524,
+        "annualized_return": 0.06907434379702537,
+        "annualized_volatility": 0.2033906770355282,
+        "max_drawdown": -0.3178457369896752,
+        "sharpe": 0.026428433700277965,
+        "sortino": 0.032871595743633825,
+        "avg_turnover": 0.5568471337579619
+      },
+      "buy_and_hold_stats": {
+        "final_value": 5.049288556044275,
+        "cumulative_return": 4.049288556044275,
+        "annualized_return": 0.3842240191009789,
+        "annualized_volatility": 0.3023422915663287,
+        "max_drawdown": -0.3471179958366627,
+        "sharpe": 0.07731121211800307,
+        "sortino": 0.10941253737924157
+      },
+      "equal_weight_stats": {
+        "final_value": 2.0221621477103713,
+        "cumulative_return": 1.0221621477103713,
+        "annualized_return": 0.1518790337272664,
+        "annualized_volatility": 0.21458010018431448,
+        "max_drawdown": -0.3464553449053246,
+        "sharpe": 0.048298077100140946,
+        "sortino": 0.05875875777239032
+      },
+      "ic_mean": -0.002028222565600321,
+      "ic_tstat": -0.2864095131593986,
+      "volatility": 0.2033096932867333,
+      "max_drawdown": -0.3178457369896752,
+      "daily_metrics_path": "experiments/gat_sector_only/gat_daily_metrics_reb1.csv"
+    },
+    "5": {
+      "stats": {
+        "final_value": 1.753677378570052,
+        "cumulative_return": 0.7726364127757528,
+        "annualized_return": 0.12171438591214323,
+        "annualized_volatility": 0.20626637927069294,
+        "max_drawdown": -0.3159931993901308,
+        "sharpe": 0.04094616586212173,
+        "sortino": 0.04945411830353293,
+        "avg_turnover": 0.1423566878980892
+      },
+      "buy_and_hold_stats": {
+        "final_value": 5.049288556044275,
+        "cumulative_return": 4.049288556044275,
+        "annualized_return": 0.3842240191009789,
+        "annualized_volatility": 0.3023422915663287,
+        "max_drawdown": -0.3471179958366627,
+        "sharpe": 0.07731121211800307,
+        "sortino": 0.10941253737924157
+      },
+      "equal_weight_stats": {
+        "final_value": 2.0221621477103713,
+        "cumulative_return": 1.0221621477103713,
+        "annualized_return": 0.1518790337272664,
+        "annualized_volatility": 0.21458010018431448,
+        "max_drawdown": -0.3464553449053246,
+        "sharpe": 0.048298077100140946,
+        "sortino": 0.05875875777239032
+      },
+      "ic_mean": -0.002028222565600321,
+      "ic_tstat": -0.2864095131593986,
+      "volatility": 0.2061842505080222,
+      "max_drawdown": -0.3159931993901308,
+      "daily_metrics_path": "experiments/gat_sector_only/gat_daily_metrics_reb5.csv"
+    }
+  },
+  "prediction_rows": 40192,
+  "prediction_unique_pairs": 40192,
+  "graph_directed": false,
+  "graph_make_undirected": true
+}
