@@ -1,0 +1,80 @@
+This chapter reports tuned benchmark results from \texttt{results/reports/thesis\_tuned\_all/} for the test period January 2, 2020 to December 27, 2024.
+
+\section{Baseline Context}
+The test-window rebased buy-and-hold baseline reaches a final value of 5.049 (global full-period buy-and-hold: 51.178). This baseline provides an absolute context for model-driven portfolio outcomes. Even the best model in this benchmark (final value 2.011) remains below buy-and-hold over this specific market regime.
+
+\section{Visual Diagnostics}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{equity_curves_key_models_reb1.png}
+  \caption{Equity curves for key model variants under daily rebalancing (\texttt{rebalance\_freq=1}).}
+  \label{fig:equity-curves-reb1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{equity_curves_key_models_reb5.png}
+  \caption{Equity curves for key model variants under weekly rebalancing (\texttt{rebalance\_freq=5}).}
+  \label{fig:equity-curves-reb5}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{ic_vs_sharpe_reb1.png}
+  \caption{Rank IC versus annualized Sharpe for daily rebalancing (\texttt{rebalance\_freq=1}).}
+  \label{fig:ic-vs-sharpe-reb1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{ic_vs_sharpe_reb5.png}
+  \caption{Rank IC versus annualized Sharpe for weekly rebalancing (\texttt{rebalance\_freq=5}).}
+  \label{fig:ic-vs-sharpe-reb5}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{risk_frontier_reb1.png}
+  \caption{Risk frontier (annualized return versus max drawdown) for daily rebalancing.}
+  \label{fig:risk-frontier-reb1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{risk_frontier_reb5.png}
+  \caption{Risk frontier (annualized return versus max drawdown) for weekly rebalancing.}
+  \label{fig:risk-frontier-reb5}
+\end{figure}
+
+\section{Top-Model Tables}
+\input{tables/generated/top_models_reb1.tex}
+\input{tables/generated/top_models_reb5.tex}
+\input{tables/generated/family_summary.tex}
+\input{tables/generated/edge_ablation.tex}
+
+\section{Key Findings}
+\textbf{1) Weekly rebalancing consistently improves deployable quality.}
+Across all 13 model variants with both policies, weekly rebalancing increases annualized Sharpe and reduces turnover. Sharpe improvement ranges from +0.028 to +0.248, while turnover collapses from roughly 0.37--0.60 (daily) to around 0.13--0.15 (weekly).
+
+\textbf{2) The best overall model is the graph-feature baseline.}
+\texttt{xgb\_node2vec\_corr\_tuned\_all} is rank 1 in the decision table for rebalance frequency 5, with annualized Sharpe 0.806, Rank IC 0.016, turnover 0.136, and final value 2.011. Relative to test buy-and-hold (5.049), this equals 39.8\% of benchmark final wealth.
+
+\textbf{3) Point-error dispersion is small, ranking dispersion is larger.}
+RMSE values are tightly concentrated (0.01994 to 0.02044) and MAE values are similarly close (0.01313 to 0.01336), while Rank IC varies from -0.0077 to 0.0160. This supports using ranking and portfolio metrics as primary discriminators.
+
+\textbf{4) Family-level averages favor XGBoost variants.}
+Under daily rebalancing, mean annualized Sharpe is 0.586 for XGBoost, 0.532 for LSTM, and 0.506 for GNNs. Under weekly rebalancing, means increase to 0.772 (XGBoost), 0.714 (LSTM), and 0.643 (GNN). GNNs remain competitive but are not dominant on average in this tuned set.
+
+\textbf{5) Edge ablation favors sector edges in this benchmark.}
+For GNN-only aggregation, sector edges provide the best mean Sharpe in both policies (0.541 daily, 0.681 weekly). Combined edges (\texttt{corr+sector+granger}) do not outperform simpler alternatives on average.
+
+\section{Research-Question Answers}
+\textbf{RQ1: Do graph-based models improve predictive quality?}
+Partially. End-to-end GNNs do not dominate all metrics, but graph-aware information clearly helps in the best-performing graph-feature model.
+
+\textbf{RQ2: Which edge signals are most useful?}
+Sector edges are strongest on average in this tuned matrix; pure correlation edges are weaker on Sharpe despite competitive IC in selected runs.
+
+\textbf{RQ3: Do predictive gains monetize in portfolio space?}
+Yes, but only partially. Risk-adjusted improvements exist across models and policies, yet absolute wealth remains below the buy-and-hold benchmark in the 2020--2024 sample.

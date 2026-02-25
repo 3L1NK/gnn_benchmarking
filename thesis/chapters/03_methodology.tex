@@ -1,0 +1,118 @@
+The benchmark follows the canonical protocol \texttt{v1\_thesis\_core} and a single reporting interface, so model comparisons reflect methodological differences rather than inconsistent execution or post-processing.
+
+\section{Formal Problem Definition}
+Let $\mathcal{U}_t=\{1,\dots,N_t\}$ denote the tradable universe on date $t$. For each asset $i \in \mathcal{U}_t$, a feature vector $\mathbf{x}_{i,t}$ is constructed from point-in-time information available at or before market close on $t$. The target is next-day log return:
+\[
+y_{i,t+1} = \log\!\left(\frac{P_{i,t+1}}{P_{i,t}}\right).
+\]
+The learning objective is to estimate a function $f_{\theta}$ such that:
+\[
+\hat{y}_{i,t+1} = f_{\theta}(\mathbf{x}_{i,t}, G_t),
+\]
+where $G_t$ is optional graph structure (used by graph-feature and end-to-end graph models). Predictions $\hat{y}_{i,t+1}$ are transformed into cross-sectional ranks and then mapped to a long-only portfolio rule.
+
+\section{Data Splits and Causal Protocol}
+\begin{itemize}
+  \item Target: one-step-ahead log-return regression (\texttt{target\_horizon=1}).
+  \item Training window: dates before January 1, 2016.
+  \item Validation window: January 1, 2016 to December 31, 2019.
+  \item Test window: January 2, 2020 to December 27, 2024.
+  \item Rebalance policies: daily (\texttt{rebalance\_freq=1}) and weekly (\texttt{rebalance\_freq=5}).
+\end{itemize}
+The split is strictly chronological, preventing future information leakage from random shuffling and matching realistic deployment conditions \citep{fama1970efficient,local_benchmarking_ml_stock_prediction}.
+
+\section{Feature and Label Pipeline}
+The feature pipeline is shared across all model families, which ensures that comparisons isolate model class effects. Key principles are:
+\begin{itemize}
+  \item \textbf{Point-in-time consistency}: only information known at date $t$ may influence $\mathbf{x}_{i,t}$.
+  \item \textbf{Stable preprocessing}: missing-value handling and scaling are deterministic and reproducible.
+  \item \textbf{Cross-family parity}: tabular, sequence, and graph models ingest equivalent economic signal where possible.
+\end{itemize}
+In this setup, edge-aware models differ by how relational structure is represented, not by privileged access to future or additional target-proximal features.
+
+\section{Model Families and Hypotheses}
+The benchmark compares four families with a common objective and identical split policy:
+\begin{itemize}
+  \item \textbf{Non-graph baselines}: \texttt{xgb\_raw}, \texttt{lstm}.
+  \item \textbf{Graph-feature baseline}: \texttt{xgb\_node2vec\_corr} (Node2Vec embedding plus XGBoost).
+  \item \textbf{End-to-end static GNNs}: GCN/GAT with edge ablations (\texttt{corr}, \texttt{sector}, \texttt{granger}, \texttt{corr+sector+granger}).
+  \item \textbf{Temporal-labeled static variants}: \texttt{tgcn\_static\_*}, \texttt{tgat\_static\_*}.
+\end{itemize}
+
+\subsection{Tree Ensemble Objective}
+Gradient boosting fits an additive model by stage-wise optimization of residual gradients \citep{friedman2001greedy}. XGBoost implements this with regularized tree complexity and efficient split finding \citep{chen2016xgboost}. The generic training objective can be written as:
+\[
+\mathcal{L} = \sum_{n=1}^{N}\ell(y_n,\hat{y}_n) + \sum_{k=1}^{K}\Omega(f_k),
+\]
+where $\Omega$ penalizes model complexity.
+
+\subsection{Sequence Modeling Objective}
+LSTM models encode temporal context through gated hidden-state transitions \citep{hochreiter1997lstm}. They are included because they are robust sequence baselines in financial forecasting literature \citep{local_lstm_stock_forecast,local_regression_forecasting_stock_lstm,local_prediction_lstm_stock}.
+
+\subsection{Graph Message Passing Objective}
+Graph models propagate neighborhood information across edges:
+\[
+\mathbf{h}^{(l+1)}_i = \phi\!\left(\mathbf{h}^{(l)}_i, \square_{j \in \mathcal{N}(i)} \psi(\mathbf{h}^{(l)}_i,\mathbf{h}^{(l)}_j,\mathbf{e}_{ij})\right).
+\]
+GCN, GAT, and GraphSAGE instantiate different choices of $\square$ and attention/aggregation mechanics \citep{kipf2017semi,velickovic2018gat,hamilton2017inductive}. Node2Vec offers an alternative graph-feature route without end-to-end graph training \citep{grover2016node2vec}.
+
+\section{Graph Construction and Edge Ablation}
+Three relation channels are modeled:
+\begin{itemize}
+  \item \textbf{Correlation edges}: historical co-movement similarity.
+  \item \textbf{Sector edges}: industry membership proximity.
+  \item \textbf{Granger-style edges}: directed lead-lag relations from lagged predictive dependence.
+\end{itemize}
+Each channel represents a distinct economic hypothesis. Union graphs (\texttt{corr+sector+granger}) test whether heterogeneous relational information is complementary or simply adds noise. Edge ablation is therefore an interpretability instrument, not only a performance check.
+
+\section{Training, Selection, and Reproducibility Controls}
+Training and tuning are executed through a single command-line interface and configuration schema. The protocol uses:
+\begin{itemize}
+  \item deterministic split enforcement and target-policy hashing,
+  \item model-level artifact persistence (predictions, daily metrics, equity curves, summaries),
+  \item standardized report generation for all runs.
+\end{itemize}
+These controls reduce accidental protocol drift and support auditable reruns.
+
+\section{Portfolio Construction Layer}
+Forecasts are monetized through a long-only top-$k$ policy. Let $\pi_t$ be selected assets at rebalance date $t$ and $w_{i,t}$ their portfolio weights. A simplified equal-weight top-$k$ rule is:
+\[
+w_{i,t} =
+\begin{cases}
+\frac{1}{k}, & i \in \pi_t,\\
+0, & \text{otherwise.}
+\end{cases}
+\]
+Transaction costs are applied on turnover:
+\[
+\text{TC}_t = c \sum_{i}|w_{i,t} - w_{i,t^-}|,
+\]
+where $c$ is the per-unit trading cost and $t^-$ denotes pre-trade weights. This explicit cost layer is essential when comparing high-turnover daily rebalancing to lower-turnover weekly rebalancing.
+
+\section{Evaluation Metrics}
+\subsection{Prediction Metrics}
+\begin{itemize}
+  \item RMSE and MAE for point-error scale.
+  \item Rank IC for cross-sectional ordering quality.
+\end{itemize}
+
+\subsection{Portfolio Metrics}
+\begin{itemize}
+  \item Annualized return and annualized volatility.
+  \item Annualized Sharpe and Sortino ratios \citep{sharpe1994sharpe}.
+  \item Maximum drawdown, turnover, and final portfolio value.
+\end{itemize}
+Portfolio-level metrics complement prediction metrics because economic utility depends on path behavior, risk, and implementation frictions \citep{markowitz1952portfolio}.
+
+\section{Decision Ranking Rule}
+To support deployment-oriented interpretation, model variants are ranked lexicographically by:
+\begin{enumerate}
+  \item annualized Sharpe (higher is better),
+  \item max drawdown (less negative is better),
+  \item Rank IC (higher is better),
+  \item turnover (lower is better).
+\end{enumerate}
+This rule intentionally prioritizes risk-adjusted utility while discouraging fragile high-turnover solutions.
+
+\section{Methodological Scope and Limits}
+The protocol prioritizes comparability and reproducibility over exhaustive model diversity. It does not claim global optimality for any one architecture class; rather, it estimates relative behavior under a controlled and transparent evaluation contract. This is the intended scope for answering the thesis research questions.

@@ -1,0 +1,97 @@
+This chapter builds the theoretical foundation needed to interpret the benchmark design and the empirical results.
+
+\section{Forecasting Equities as a Weak-Signal Ranking Problem}
+Short-horizon equity forecasting is fundamentally a low signal-to-noise problem. Under efficient-market arguments, predictable structure in liquid markets should be limited, unstable, and quickly arbitraged \citep{fama1970efficient}. In practice, this means that improvements in point-error metrics can be small, and many apparent gains vanish when tested out-of-sample \citep{local_benchmarking_ml_stock_prediction}.
+
+Let $r_{i,t+1}$ be the next-period return for asset $i$, and let $\hat{r}_{i,t+1}$ be a model forecast. In a portfolio context, the objective is typically not exact level prediction but cross-sectional ordering:
+\[
+\hat{r}_{i,t+1} > \hat{r}_{j,t+1} \Rightarrow \text{prefer } i \text{ over } j.
+\]
+This motivates rank-based diagnostics such as Information Coefficient (IC), while still tracking point-error metrics (RMSE, MAE) for calibration quality. The emphasis on ranking is consistent with active-management practice, where signal quality is translated into portfolio weights and constrained execution \citep{grinold1989fundamental}.
+
+\section{Core Neural-Network Foundations}
+\subsection{Feed-forward Networks}
+A feed-forward neural network composes affine transformations and nonlinear activations:
+\[
+\mathbf{h}^{(l+1)} = \sigma\!\left(\mathbf{W}^{(l)}\mathbf{h}^{(l)} + \mathbf{b}^{(l)}\right).
+\]
+Depth allows hierarchical representation learning, where early layers model simple feature interactions and later layers model more abstract structure \citep{goodfellow2016deep}. In finance tabular settings, this flexibility can capture nonlinear interactions between lagged returns, technical indicators, and cross-sectional features.
+
+\subsection{Backpropagation and Optimization}
+Training minimizes an empirical loss over samples:
+\[
+\min_{\theta} \frac{1}{N}\sum_{n=1}^{N}\mathcal{L}(f_{\theta}(x_n), y_n),
+\]
+where $\theta$ contains all model parameters. Gradients are computed efficiently via backpropagation and the chain rule \citep{rumelhart1986learning}. Parameter updates are then performed with stochastic gradient methods; Adam is a common default because it adaptively rescales learning rates by first and second moments of historical gradients \citep{kingma2015adam}.
+
+\subsection{Generalization Controls}
+Because financial regimes shift, controlling overfitting is central. Standard controls include:
+\begin{itemize}
+  \item Regularization (weight decay / constrained capacity).
+  \item Dropout to reduce co-adaptation of hidden units \citep{srivastava2014dropout}.
+  \item Normalization layers such as Batch Normalization for more stable optimization \citep{ioffe2015batchnorm}.
+  \item Early stopping using a chronologically valid validation slice.
+\end{itemize}
+These controls do not guarantee robustness, but they reduce the chance that apparent in-sample fit is purely noise.
+
+\section{Sequence Modeling for Financial Time Series}
+Recurrent models represent temporal dependence by maintaining hidden state across time. Long Short-Term Memory (LSTM) networks introduce gating mechanisms (input, forget, output gates) to mitigate vanishing gradients and preserve long-range dependencies \citep{hochreiter1997lstm}. For return forecasting, LSTMs are often used as sequence baselines because they can learn lag structures that fixed-window linear models may miss \citep{local_lstm_stock_forecast,local_regression_forecasting_stock_lstm,local_prediction_lstm_stock}.
+
+However, pure sequence models process each asset stream independently unless additional relational features are injected. This limits their ability to represent contemporaneous cross-asset propagation effects (for example sector shocks diffusing through highly connected equities).
+
+\section{Gradient-Boosted Trees as Strong Tabular Baselines}
+Gradient boosting builds an additive ensemble of weak learners (typically shallow trees) fit to residual gradients of the loss \citep{friedman2001greedy}. XGBoost extends this framework with regularization, sparse-aware split finding, shrinkage, and systems-level optimizations, making it a highly competitive baseline on heterogeneous tabular data \citep{chen2016xgboost}. In many applied forecasting tasks, a carefully tuned boosted-tree model remains difficult to beat consistently.
+
+For this reason, any claim that graph models are ``better'' should be evaluated against strong non-graph baselines, not only against weak linear references.
+
+\section{Graph Learning for Cross-Asset Structure}
+\subsection{Why Graphs}
+An equity universe is naturally relational: companies share sectors, supply-chain links, common macro sensitivities, and co-movement structure. Graph learning formalizes this by representing assets as nodes $V$ and relations as edges $E$, giving $G=(V,E)$ with feature matrix $\mathbf{X}$ and adjacency matrix $\mathbf{A}$.
+
+\subsection{Message Passing}
+Many graph models follow a message-passing template:
+\[
+\mathbf{h}^{(l+1)}_i = \phi\!\left(\mathbf{h}^{(l)}_i,\; \square_{j \in \mathcal{N}(i)} \psi(\mathbf{h}^{(l)}_i,\mathbf{h}^{(l)}_j,\mathbf{e}_{ij})\right),
+\]
+where $\square$ is an aggregation operator (sum/mean/attention). This structure explicitly blends node-local and neighborhood information at each layer.
+
+\subsection{Canonical Architectures}
+\begin{itemize}
+  \item GCN: normalized neighborhood averaging with shared linear transforms \citep{kipf2017semi}.
+  \item GAT: learnable attention coefficients per edge, allowing non-uniform neighbor weighting \citep{velickovic2018gat}.
+  \item GraphSAGE: inductive neighbor aggregation designed for scalable inference on large graphs \citep{hamilton2017inductive}.
+  \item Node2Vec: random-walk-based node embeddings useful as graph features for non-graph models \citep{grover2016node2vec}.
+\end{itemize}
+
+In financial applications, edge construction is itself a modeling decision. Correlation edges, sector edges, and Granger-like lead-lag edges encode different hypotheses about transmission pathways. Therefore, edge ablation is not optional; it is required to interpret where graph signal originates.
+
+\section{From Prediction Metrics to Portfolio Metrics}
+This thesis reports both prediction and portfolio diagnostics because model quality is multidimensional.
+
+\textbf{Prediction-level metrics.}
+RMSE and MAE summarize absolute error magnitude. Rank IC summarizes ordering quality:
+\[
+\text{IC}_t = \text{corr}_{\text{rank}}(\hat{\mathbf{r}}_t,\mathbf{r}_t),
+\]
+and mean IC across dates estimates directional ranking usefulness.
+
+\textbf{Portfolio-level metrics.}
+Given a trading rule and transaction costs, forecasts produce realized equity curves. Performance is then evaluated with annualized return, annualized Sharpe ratio \citep{sharpe1994sharpe}, maximum drawdown, and turnover. Sharpe can be interpreted within mean-variance risk-adjusted return framing \citep{markowitz1952portfolio}, while drawdown and turnover capture path risk and implementation friction that prediction metrics alone cannot reflect.
+
+This dual view is central: a model with higher IC may still underperform after costs if turnover is excessive or tail losses dominate.
+
+\section{Related Literature in Graph-Based Financial Forecasting}
+Recent studies explore temporal-relational ranking, hierarchical attention, dynamic graph updates, hybrid sequence-graph architectures, and graph-augmented portfolio construction \citep{local_temporal_relational_ranking_stock_prediction,local_hats_hierarchical_graph_attention_stock,local_dynamic_gnn_enhanced_volatility_prediction,local_dynamic_portfolio_rebalance_hybrid_gnn,local_spatial_temporal_gnn_stock_prediction,local_graph_augmented_hybrid_portfolio_risk_management,local_graph_neural_networks_asset_management,local_graph_neural_networks_portfolio_optimization}.
+
+Survey work similarly reports promising but non-uniform evidence: gains depend heavily on universe definition, edge construction, validation protocol, and cost assumptions \citep{local_review_gnn_finance_methods,local_gnn_review_methods_applications,local_gnn_financial_forecasting_literature_review}. This motivates benchmark designs that emphasize protocol consistency and reproducible artifact generation.
+
+\section{Positioning of This Thesis}
+Most prior papers differ simultaneously in datasets, time windows, objective functions, and execution assumptions, which makes direct performance claims hard to compare. This thesis positions itself as a controlled benchmark study:
+\begin{itemize}
+  \item one data pipeline and leakage-safe split protocol,
+  \item one unified result ledger across model families,
+  \item one portfolio construction rule with explicit transaction costs,
+  \item two rebalance policies for implementation sensitivity,
+  \item and explicit edge-type ablation for interpretability.
+\end{itemize}
+This framing does not claim universal superiority of one architecture class; instead, it aims to isolate when and where relational modeling adds measurable value \citep{local_benchmarking_gnns,local_exploring_gnn_stock_rolling_windows,local_stock_forecast_nn_graphs}.

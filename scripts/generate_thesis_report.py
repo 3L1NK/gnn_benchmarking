@@ -31,6 +31,25 @@ KEY_METRICS = [
     "portfolio_turnover",
 ]
 
+MODEL_ALIAS = {
+    "xgb_raw": "XGB",
+    "xgb_node2vec": "XGB+Node2Vec",
+    "lstm": "LSTM",
+    "gcn": "GCN",
+    "gat": "GAT",
+    "tgcn_static": "TGCN-static",
+    "tgat_static": "TGAT-static",
+}
+
+EDGE_ALIAS = {
+    "corr+sector+granger": "corr+sec+gr",
+    "corr_sector_granger": "corr+sec+gr",
+    "node2vec_correlation": "n2v-corr",
+    "corr": "corr",
+    "sector": "sector",
+    "granger": "granger",
+}
+
 
 def _safe_read_results(path: Path) -> pd.DataFrame:
     if not path.exists():
@@ -50,16 +69,13 @@ def _ensure_columns(df: pd.DataFrame, cols: Iterable[str]) -> pd.DataFrame:
 
 
 def _run_label(row: pd.Series) -> str:
-    run_tag = row.get("run_tag", "")
-    model_name = row.get("model_name", "")
+    model_name = str(row.get("model_name", "")).strip().lower()
     edge_raw = row.get("edge_type", "")
-
-    base = str(run_tag) if pd.notna(run_tag) and str(run_tag).strip() else str(model_name)
-    if not base or base == "<NA>":
-        base = "run"
-    edge = str(edge_raw) if pd.notna(edge_raw) else ""
+    base = MODEL_ALIAS.get(model_name, model_name.upper() if model_name else "Model")
+    edge = str(edge_raw).strip().lower() if pd.notna(edge_raw) else ""
     if edge and edge not in {"none", "nan"}:
-        return f"{base}|{edge}"
+        edge_label = EDGE_ALIAS.get(edge, edge.replace("_", "+"))
+        return f"{base} ({edge_label})"
     return base
 
 
@@ -403,7 +419,7 @@ def _plot_risk_frontier(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
     sharpes = pd.to_numeric(d["portfolio_sharpe_annualized"], errors="coerce").fillna(0.0)
     sizes = (sharpes.clip(lower=0.0) + 0.05) * 900.0
 
-    plt.figure(figsize=(9, 6))
+    plt.figure(figsize=(10, 7))
     plt.scatter(
         d["portfolio_max_drawdown"],
         d["portfolio_annualized_return"],
@@ -420,7 +436,7 @@ def _plot_risk_frontier(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
     plt.title(f"Risk Frontier (reb={freq})")
     plt.grid(alpha=0.3, linestyle="--")
     plt.tight_layout()
-    plt.savefig(out_dir / f"risk_frontier_reb{freq}.png", dpi=180)
+    plt.savefig(out_dir / f"risk_frontier_reb{freq}.png", dpi=220)
     plt.close()
 
 
@@ -465,7 +481,7 @@ def _plot_ic_vs_sharpe(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
         return
     d["label"] = d.apply(_run_label, axis=1)
 
-    plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(10, 7))
     plt.scatter(d["prediction_rank_ic"], d["portfolio_sharpe_annualized"], alpha=0.85, s=50)
     for _, r in d.iterrows():
         plt.text(float(r["prediction_rank_ic"]), float(r["portfolio_sharpe_annualized"]), str(r["label"]), fontsize=7)
@@ -474,7 +490,7 @@ def _plot_ic_vs_sharpe(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
     plt.title(f"IC vs Annualized Sharpe (reb={freq})")
     plt.grid(alpha=0.3, linestyle="--")
     plt.tight_layout()
-    plt.savefig(out_dir / f"ic_vs_sharpe_reb{freq}.png", dpi=180)
+    plt.savefig(out_dir / f"ic_vs_sharpe_reb{freq}.png", dpi=220)
     plt.close()
 
 
@@ -547,33 +563,30 @@ def _plot_equity_panels(latest_df: pd.DataFrame, out_dir: Path, frequencies: Lis
     if key_runs.empty:
         return
 
-    ncols = len(frequencies)
-    fig, axes = plt.subplots(1, ncols, figsize=(9 * ncols, 5), squeeze=False)
-    axes = axes.ravel().tolist()
-
-    for ax, freq in zip(axes, frequencies):
-        subset = key_runs[key_runs["rebalance_freq"] == int(freq)].copy()
+    def _draw_equity_ax(ax: plt.Axes, subset: pd.DataFrame, freq: int) -> None:
         if subset.empty:
-            ax.set_title(f"Equity Curves (reb={freq})")
+            ax.set_title(f"Key Equity Curves (reb={freq})")
             ax.axis("off")
-            continue
+            return
 
         baseline_drawn = False
         baseline_window = ""
+        curve_count = 0
         for _, row in subset.iterrows():
             curve = _read_curve_csv(_model_curve_path(row, int(freq)))
             if curve is None:
                 continue
-            ax.plot(curve.index, curve.values, label=_run_label(row), linewidth=1.8)
+            curve_count += 1
+            ax.plot(curve.index, curve.values, label=_run_label(row), linewidth=2.0)
             if not baseline_drawn:
                 bh_path, eqw_path = _baseline_paths(row, int(freq))
                 bh = _read_curve_csv(bh_path)
                 eqw = _read_curve_csv(eqw_path)
                 if bh is not None:
-                    ax.plot(bh.index, bh.values, label="buy_and_hold (test rebased)", linestyle="--", linewidth=1.5)
+                    ax.plot(bh.index, bh.values, label="buy_and_hold (test rebased)", linestyle="--", linewidth=1.8)
                     baseline_window = f"{bh.index.min().date()}..{bh.index.max().date()}"
                 if eqw is not None:
-                    ax.plot(eqw.index, eqw.values, label="equal_weight", linestyle=":", linewidth=1.5)
+                    ax.plot(eqw.index, eqw.values, label="equal_weight", linestyle=":", linewidth=1.8)
                 baseline_drawn = True
 
         if baseline_window:
@@ -583,11 +596,27 @@ def _plot_equity_panels(latest_df: pd.DataFrame, out_dir: Path, frequencies: Lis
         ax.set_xlabel("Date")
         ax.set_ylabel("Equity")
         ax.grid(alpha=0.3, linestyle="--")
-        ax.legend(fontsize=8)
+        if curve_count > 0:
+            ax.legend(fontsize=9, ncol=2, frameon=False)
 
+    # Backward-compatible combined panel.
+    ncols = len(frequencies)
+    fig, axes = plt.subplots(1, ncols, figsize=(9 * ncols, 5.5), squeeze=False)
+    for ax, freq in zip(axes.ravel().tolist(), frequencies):
+        subset = key_runs[key_runs["rebalance_freq"] == int(freq)].copy()
+        _draw_equity_ax(ax, subset, int(freq))
     fig.tight_layout()
-    fig.savefig(out_dir / "equity_curves_key_models.png", dpi=180)
+    fig.savefig(out_dir / "equity_curves_key_models.png", dpi=220)
     plt.close(fig)
+
+    # Readable thesis variants: one larger figure per rebalance policy.
+    for freq in frequencies:
+        subset = key_runs[key_runs["rebalance_freq"] == int(freq)].copy()
+        fig_single, ax_single = plt.subplots(figsize=(11, 6.5))
+        _draw_equity_ax(ax_single, subset, int(freq))
+        fig_single.tight_layout()
+        fig_single.savefig(out_dir / f"equity_curves_key_models_reb{int(freq)}.png", dpi=220)
+        plt.close(fig_single)
 
 
 def generate_reports(results_path: Path, out_dir: Path) -> None:

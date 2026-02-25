@@ -1,0 +1,64 @@
+\documentclass[11pt,a4paper,oneside]{scrreprt}
+
+\input{preamble}
+\input{metadata}
+
+\begin{document}
+
+\fancyfoot[R]{}
+\input{frontmatter/titlepage}
+\input{frontmatter/disclaimer}
+\fancyfoot[R]{\thepage}
+
+\pagenumbering{roman}
+
+\tableofcontents
+\newpage
+\addcontentsline{toc}{chapter}{\listfigurename}
+\listoffigures
+\newpage
+\addcontentsline{toc}{chapter}{\listtablename}
+\listoftables
+\newpage
+
+\chapter*{Abstract}
+\markboth{Abstract}{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+\input{chapters/00_abstract}
+
+\cleardoublepage
+\pagenumbering{arabic}
+
+\chapter{Introduction}
+\label{ch:introduction}
+\input{chapters/01_introduction}
+
+\chapter{Background and Related Work}
+\label{ch:background}
+\input{chapters/02_background}
+
+\chapter{Methodology}
+\label{ch:methodology}
+\input{chapters/03_methodology}
+
+\chapter{Experimental Setup}
+\label{ch:experiments}
+\input{chapters/04_experiments}
+
+\chapter{Results and Discussion}
+\label{ch:results}
+\input{chapters/05_results}
+
+\chapter{Conclusion and Outlook}
+\label{ch:conclusion}
+\input{chapters/06_conclusion}
+
+\appendix
+\chapter{Additional Material}
+\label{app:additional}
+\input{appendix/appendix_a}
+
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+\end{document}

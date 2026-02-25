@@ -1,0 +1,130 @@
+\section{Additional Diagnostics}
+This appendix extends the main-text diagnostics with supplementary interpretation guidance.
+\begin{itemize}
+  \item Full decision ranking tables by rebalance policy.
+  \item Expanded IC distribution and risk frontier visuals.
+  \item Baseline-context interpretation (global versus test-window buy-and-hold).
+  \item Protocol compliance and artifact-audit notes for rerun traceability.
+\end{itemize}
+
+In practical review, the recommendation is to read diagnostics in this order: (1) ranking table, (2) turnover-adjusted Sharpe, (3) drawdown profile, and then (4) cumulative equity path. This sequence reduces the chance of selecting visually appealing but operationally fragile strategies.
+
+\section{Local Literature Corpus}
+This section summarizes the local paper corpus in \texttt{papers/} and clarifies how those readings informed model selection, ablation design, and interpretation.
+
+\subsection{Thematic Coverage}
+The local corpus spans six broad clusters:
+\begin{itemize}
+  \item \textbf{Core graph methods and surveys}: benchmarking and review-oriented papers \citep{local_benchmarking_gnns,local_review_gnn_finance_methods,local_gnn_review_methods_applications,local_gnn_financial_forecasting_literature_review}.
+  \item \textbf{Temporal-relational stock prediction}: studies combining sequence dynamics with graph structure \citep{local_temporal_relational_ranking_stock_prediction,local_spatial_temporal_gnn_stock_prediction,local_multiscale_temporal_hyperedge_stock}.
+  \item \textbf{Attention and hierarchical graph variants}: architectures emphasizing relation weighting and hierarchy \citep{local_hats_hierarchical_graph_attention_stock,local_large_scale_temporal_portfolio_gat}.
+  \item \textbf{Hybrid model design}: combinations of CNN/LSTM/TFT and graph components \citep{local_hybrid_cnn_lstm_gnn_stock_prediction,local_hybrid_tft_gnn_stock_prediction,local_xgboost_enhanced_gnn_heterogeneous_tabular}.
+  \item \textbf{Portfolio and asset-management framing}: papers connecting graph forecasts to allocation decisions \citep{local_graph_neural_networks_asset_management,local_graph_neural_networks_portfolio_optimization,local_dynamic_portfolio_rebalance_hybrid_gnn,local_graph_augmented_hybrid_portfolio_risk_management}.
+  \item \textbf{Baseline and sequence references}: non-graph forecasting baselines used for comparison context \citep{local_lstm_stock_forecast,local_regression_forecasting_stock_lstm,local_prediction_lstm_stock,local_benchmarking_ml_stock_prediction}.
+\end{itemize}
+
+\subsection{How the Corpus Informed This Thesis}
+The corpus informed this benchmark in three concrete ways:
+\begin{enumerate}
+  \item \textbf{Model set design}: inclusion of both end-to-end GNNs and graph-feature hybrids.
+  \item \textbf{Edge-policy ablation}: explicit testing of correlation, sector, and Granger-style edges.
+  \item \textbf{Evaluation framing}: emphasis on portfolio-level diagnostics rather than point error alone.
+\end{enumerate}
+
+\subsection{Extended Paper Map}
+\begin{longtable}{p{0.28\textwidth}p{0.20\textwidth}p{0.48\textwidth}}
+\toprule
+\textbf{Reference Key} & \textbf{Theme} & \textbf{Relevance to This Thesis} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Reference Key} & \textbf{Theme} & \textbf{Relevance to This Thesis} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{local\_benchmarking\_gnns} & Benchmarking & Motivates controlled protocol comparisons across graph architectures. \\
+\texttt{local\_exploring\_gnn\_stock\_rolling\_windows} & Rolling windows & Supports time-aware evaluation framing and regime-sensitivity concerns. \\
+\texttt{local\_benchmarking\_ml\_stock\_prediction} & Baselines & Reinforces the need for strong non-graph baselines in claims of superiority. \\
+\texttt{local\_review\_gnn\_finance\_methods} & Survey & Summarizes finance-domain GNN opportunities and common pitfalls. \\
+\texttt{local\_gnn\_review\_methods\_applications} & Survey & Provides broader taxonomy for architecture and application scope. \\
+\texttt{local\_gnn\_financial\_forecasting\_literature\_review} & Survey & Highlights inconsistency of evaluation assumptions across papers. \\
+\texttt{local\_temporal\_relational\_ranking\_stock\_prediction} & Ranking & Aligns with cross-sectional rank-IC emphasis in this thesis. \\
+\texttt{local\_hats\_hierarchical\_graph\_attention\_stock} & Attention GNN & Motivates relation-weighting and hierarchical structure hypotheses. \\
+\texttt{local\_spatial\_temporal\_gnn\_stock\_prediction} & Spatio-temporal GNN & Supports combined temporal and cross-asset modeling choices. \\
+\texttt{local\_multiscale\_temporal\_hyperedge\_stock} & Hyperedge dynamics & Informs discussion of richer relation structures beyond pairwise edges. \\
+\texttt{local\_dynamic\_gnn\_enhanced\_volatility\_prediction} & Dynamic graph & Motivates future extension toward adaptive edge refresh. \\
+\texttt{local\_capturing\_structure\_evolve\_gnn} & Dynamic structure & Supports concern that static graphs may miss structural drift. \\
+\texttt{local\_graph\_representation\_similarity\_stocks} & Representation learning & Connects graph embeddings to stock similarity and transfer features. \\
+\texttt{local\_graph\_neural\_networks\_asset\_management} & Asset management & Motivates portfolio-level interpretation instead of pure prediction metrics. \\
+\texttt{local\_graph\_neural\_networks\_portfolio\_optimization} & Portfolio optimization & Supports allocation-centric framing of model utility. \\
+\texttt{local\_dynamic\_portfolio\_rebalance\_hybrid\_gnn} & Rebalancing & Informs explicit rebalance-policy comparison in this benchmark. \\
+\texttt{local\_graph\_augmented\_hybrid\_portfolio\_risk\_management} & Risk management & Supports risk-aware discussion (drawdown, turnover, robustness). \\
+\texttt{local\_large\_scale\_temporal\_portfolio\_gat} & Scale and attention & Motivates scalable attention-style architectures for large universes. \\
+\texttt{local\_ml\_with\_graphs\_finance} & Finance graph ML & Provides domain context linking graph methods to financial structure. \\
+\texttt{local\_stock\_forecast\_nn\_graphs} & Hybrid forecasting & Supports inclusion of graph and neural baselines in one comparison. \\
+\texttt{local\_xgboost\_enhanced\_gnn\_heterogeneous\_tabular} & Hybrid design & Motivates graph-feature plus tree-ensemble architecture choices. \\
+\texttt{local\_hybrid\_cnn\_lstm\_gnn\_stock\_prediction} & Hybrid temporal model & Informs discussion of multimodal sequence-graph integration. \\
+\texttt{local\_hybrid\_tft\_gnn\_stock\_prediction} & Transformer-graph hybrid & Context for future temporal-attention extensions. \\
+\texttt{local\_distillation\_future\_aware\_gnn\_stock} & Distillation & Raises deployment questions around teacher-student transfer. \\
+\texttt{local\_tcgpn} & Graph portfolio network & Supports broader architecture landscape in related-work discussion. \\
+\texttt{local\_lstm\_stock\_forecast} & LSTM baseline & Reinforces sequence baseline relevance. \\
+\texttt{local\_regression\_forecasting\_stock\_lstm} & LSTM baseline & Supports non-graph temporal baseline selection. \\
+\texttt{local\_prediction\_lstm\_stock} & LSTM baseline & Additional evidence for sequence baseline comparability. \\
+\texttt{local\_ctg\_cnn\_stock\_prediction} & CNN-based baseline & Context for alternative non-graph deep forecasting families. \\
+\texttt{local\_stock\_forecasting\_using\_evo\_gn} & Evolutionary model & Illustrates diversity of search/optimization approaches in stock prediction. \\
+\texttt{local\_topics\_optimization\_deep\_neural\_networks} & Optimization theory & Supports optimizer and training-stability discussions. \\
+\texttt{local\_word2vec\_towards\_theory} & Embedding theory & Conceptual context for embedding-style representation learning. \\
+\end{longtable}
+
+\subsection{Interpretation Note}
+Because several local references are implementation-focused or survey-style documents, this thesis uses them primarily for methodological positioning and design intuition. Core theoretical claims in the main chapters are anchored to canonical peer-reviewed references where available.
+
+\subsection{Title-Level Reading Notes}
+This subsection records concise title-level notes for each local paper so the reading process is explicit and auditable. These notes are intentionally conservative and avoid claiming results not directly validated in this thesis.
+
+\begin{enumerate}
+  \item \textbf{Benchmarking GNNs} \citep{local_benchmarking_gnns}: motivates controlled comparative evaluation instead of single-model reporting.
+  \item \textbf{Exploring GNN with rolling windows} \citep{local_exploring_gnn_stock_rolling_windows}: emphasizes time-split discipline and non-stationarity sensitivity.
+  \item \textbf{Benchmarking ML methods for stock prediction} \citep{local_benchmarking_ml_stock_prediction}: supports inclusion of strong non-graph baselines and caution in generalizing gains.
+  \item \textbf{Review on GNN methods in finance} \citep{local_review_gnn_finance_methods}: gives domain taxonomy of tasks, graphs, and risk metrics.
+  \item \textbf{GNN review of methods and applications} \citep{local_gnn_review_methods_applications}: broad method survey used for terminology and architecture framing.
+  \item \textbf{GNN financial forecasting literature review} \citep{local_gnn_financial_forecasting_literature_review}: highlights inconsistent protocol choices across studies.
+  \item \textbf{Temporal relational ranking} \citep{local_temporal_relational_ranking_stock_prediction}: closely aligned with rank-based target use in this thesis.
+  \item \textbf{HATS hierarchical attention} \citep{local_hats_hierarchical_graph_attention_stock}: informs relation-weighting and hierarchy discussion.
+  \item \textbf{Spatial-temporal GNN for stock prediction} \citep{local_spatial_temporal_gnn_stock_prediction}: supports the case for blending temporal and relational structure.
+  \item \textbf{Multi-scale temporal hyperedge model} \citep{local_multiscale_temporal_hyperedge_stock}: motivates future work on richer-than-pairwise graph relations.
+  \item \textbf{Dynamic GNN for volatility prediction} \citep{local_dynamic_gnn_enhanced_volatility_prediction}: motivates dynamic edge updates and volatility-aware objectives.
+  \item \textbf{Capturing structure evolve with GNN} \citep{local_capturing_structure_evolve_gnn}: reinforces that market relationship graphs are time-varying.
+  \item \textbf{Graph representation for similarity analysis} \citep{local_graph_representation_similarity_stocks}: supports embedding-based graph-feature engineering.
+  \item \textbf{GNNs for asset management} \citep{local_graph_neural_networks_asset_management}: ties forecasting output to portfolio implementation concerns.
+  \item \textbf{GNNs for portfolio optimization} \citep{local_graph_neural_networks_portfolio_optimization}: contributes allocation-centric perspective.
+  \item \textbf{Dynamic portfolio rebalance hybrid GNN} \citep{local_dynamic_portfolio_rebalance_hybrid_gnn}: informs rebalance-policy comparison in the benchmark.
+  \item \textbf{Graph-augmented hybrid risk management} \citep{local_graph_augmented_hybrid_portfolio_risk_management}: emphasizes drawdown and risk-path diagnostics.
+  \item \textbf{Large-scale temporal portfolio GAT} \citep{local_large_scale_temporal_portfolio_gat}: motivates scalability considerations for attention architectures.
+  \item \textbf{Machine learning with graphs on finance} \citep{local_ml_with_graphs_finance}: provides high-level context for graph representation choices.
+  \item \textbf{Stock forecast with neural networks and graphs} \citep{local_stock_forecast_nn_graphs}: supports hybrid comparative framing.
+  \item \textbf{XGBoost-enhanced GNN architecture} \citep{local_xgboost_enhanced_gnn_heterogeneous_tabular}: conceptually aligned with graph-feature + booster hybrids.
+  \item \textbf{Hybrid CNN-LSTM-GNN} \citep{local_hybrid_cnn_lstm_gnn_stock_prediction}: informs discussion of multimodal temporal-relational integration.
+  \item \textbf{Hybrid TFT-GNN} \citep{local_hybrid_tft_gnn_stock_prediction}: suggests transformer-graph combinations as follow-up directions.
+  \item \textbf{Distillation future-aware GNN} \citep{local_distillation_future_aware_gnn_stock}: motivates teacher-student transfer ideas for robust deployment.
+  \item \textbf{TCGPN} \citep{local_tcgpn}: contributes to broader architecture landscape in temporal graph portfolio modeling.
+  \item \textbf{LSTM stock forecast} \citep{local_lstm_stock_forecast}: supports recurrent baseline relevance.
+  \item \textbf{Regression and forecasting with LSTM} \citep{local_regression_forecasting_stock_lstm}: reinforces sequence baseline implementation choices.
+  \item \textbf{Prediction on LSTM stock} \citep{local_prediction_lstm_stock}: additional context for recurrent-model robustness.
+  \item \textbf{CTG CNN stock prediction} \citep{local_ctg_cnn_stock_prediction}: non-graph deep baseline context.
+  \item \textbf{Stock forecasting using evolutionary GN} \citep{local_stock_forecasting_using_evo_gn}: indicates search-based model design alternatives.
+  \item \textbf{Topics in optimization via DNNs} \citep{local_topics_optimization_deep_neural_networks}: used for optimization and training-stability framing.
+  \item \textbf{word2vec toward theory} \citep{local_word2vec_towards_theory}: conceptual backdrop for embedding-based representations.
+\end{enumerate}
+
+\subsection{Corpus-to-Benchmark Traceability}
+To keep this thesis operationally grounded, each stage of the benchmark maps to corpus themes:
+\begin{itemize}
+  \item \textbf{Model family selection}: survey and benchmark papers justified a mixed model set (boosting, LSTM, graph-feature, GNN).
+  \item \textbf{Edge-type ablation}: relational papers motivated explicit testing of sector, correlation, and Granger-style links.
+  \item \textbf{Portfolio evaluation}: asset-management and risk papers motivated Sharpe, drawdown, turnover, and baseline-context reporting.
+  \item \textbf{Reproducibility}: benchmarking papers motivated deterministic orchestration, artifact ledgers, and scripted table export.
+\end{itemize}
+
+\nocite{*}

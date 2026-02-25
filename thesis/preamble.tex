@@ -1,0 +1,58 @@
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[a4paper,margin=1in]{geometry}
+
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{microtype}
+\usepackage{fancyhdr}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{siunitx}
+\sisetup{round-mode=places,round-precision=4}
+
+\usepackage{graphicx}
+\graphicspath{{figures/}{../results/reports/thesis_tuned_all/}{../results/reports/thesis/}}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{pdflscape}
+\usepackage{csquotes}
+\usepackage{textcomp}
+\usepackage{wasysym}
+
+\usepackage[numbers,sort&compress]{natbib}
+\setcitestyle{numbers,square,sort&compress}
+\usepackage[hidelinks]{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{}
+\fancyhead[C]{}
+\fancyhead[R]{\small\leftmark}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancyfoot[R]{\thepage}
+\renewcommand*\MakeUppercase[1]{#1}
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \fancyhead[R]{\small\leftmark}
+  \renewcommand{\headrulewidth}{0.4pt}
+  \fancyfoot[R]{\thepage}
+}
+
+% Reduce large top whitespace before chapter headings in scrreprt.
+\RedeclareSectionCommand[
+  beforeskip=0pt,
+  afterskip=1.2\baselineskip
+]{chapter}
+
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}

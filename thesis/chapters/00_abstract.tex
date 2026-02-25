@@ -1,0 +1,8 @@
+This thesis benchmarks graph-based and non-graph models for next-day multi-asset return prediction under one fixed and reproducible protocol. 
+The evaluation spans the out-of-sample period from January 2, 2020 to December 27, 2024 and compares XGBoost, LSTM, and multiple graph neural network (GNN) variants under daily and weekly rebalancing.
+
+The results show three robust patterns. First, prediction error metrics (RMSE/MAE) are tightly clustered across models, so point-error gains are modest. Second, risk-adjusted portfolio outcomes are materially better under weekly rebalancing, with much lower turnover than daily trading. Third, the best overall model is the graph-feature baseline \texttt{xgb\_node2vec\_corr\_tuned\_all}, which reaches annualized Sharpe 0.806 and final value 2.011 at rebalance frequency 5.
+
+At the model-family level, XGBoost variants achieve the highest average Sharpe under both rebalancing policies, while static GNN variants remain competitive but less consistent. Edge ablations indicate that sector-based graphs are strongest on average for GNNs in the tuned experiment set; combined edge graphs do not consistently improve outcomes.
+
+Despite model-level improvements, all tested model-driven strategies underperform the test-window buy-and-hold baseline (final value 5.049). The thesis therefore concludes that relational structure is useful, but practical deployment requires stronger robustness checks, explicit transaction-cost sensitivity analysis, and strict time-aware graph construction controls to exclude leakage risk.

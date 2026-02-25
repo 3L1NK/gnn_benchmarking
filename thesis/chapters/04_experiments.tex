@@ -1,0 +1,90 @@
+All experiments are executed through a unified training and reporting stack so that the thesis compares models under one consistent contract.
+
+\section{Execution Workflow}
+The project supports single-run debugging, core-matrix sweeps, and the tuned benchmark matrix used for final reporting.
+
+\begin{verbatim}
+# Single run (debug / smoke check)
+python train.py --config configs/runs/core/gcn_corr_only.yaml
+
+# Canonical core matrix
+python scripts/run_core_thesis_matrix.py --fresh-results --with-report
+
+# Tuned matrix used in this thesis
+python scripts/run_all_models_tuned_matrix.py --fresh-results --with-report
+\end{verbatim}
+
+The tuned matrix writes a consolidated ledger to \texttt{results/results\_tuned\_all.jsonl}, while derived comparison artifacts are exported to \texttt{results/reports/thesis\_tuned\_all/}.
+
+\section{Run-Orchestration Design}
+The orchestration scripts enforce a repeatable run order and standardized metadata. Each run records:
+\begin{itemize}
+  \item model identity (\texttt{model\_name}, \texttt{model\_family}),
+  \item relation policy (\texttt{edge\_type}),
+  \item rebalance policy (\texttt{rebalance\_freq}),
+  \item target-policy hash and artifact prefix,
+  \item timestamped summary metrics.
+\end{itemize}
+This metadata is the key mechanism that enables post-hoc aggregation without manual spreadsheet assembly.
+
+\section{Artifact Interface}
+The thesis directly consumes generated CSV and figure outputs:
+\begin{itemize}
+  \item \texttt{master\_comparison.csv}: full run-level comparison matrix.
+  \item \texttt{family\_summary.csv}: best run by category and rebalance policy.
+  \item \texttt{edge\_ablation\_summary.csv}: aggregated diagnostics for GNN edge variants.
+  \item \texttt{decision\_ranking.csv}: deterministic deployment-oriented ranking.
+  \item \texttt{baseline\_context.csv}: test-window and global buy-and-hold context.
+  \item \texttt{*.png} diagnostics: equity curves, IC trade-off plots, risk frontiers.
+\end{itemize}
+
+The same files are also used for quality checks and can be diffed across reruns for regression detection.
+
+\section{Report Generation Pipeline}
+The reporting pipeline has two layers:
+\begin{enumerate}
+  \item \textbf{Numerical aggregation}: \texttt{scripts/generate\_thesis\_report.py} reads the JSONL ledger, selects latest valid runs, computes ranking tables, and exports visual diagnostics.
+  \item \textbf{LaTeX synchronization}: \texttt{thesis/scripts/export\_tables.py} converts report CSVs into thesis-ready tables that are included with \texttt{\textbackslash input\{\}}.
+\end{enumerate}
+
+This separation keeps evaluation logic in Python while preserving a lightweight, auditable LaTeX layer.
+
+\section{Figure and Table Integration}
+The thesis is configured to import generated assets from \texttt{results/reports/thesis\_tuned\_all/}. Consequently:
+\begin{itemize}
+  \item rerunning experiments and report generation updates the manuscript artifacts,
+  \item figure labels and table captions remain stable across reruns,
+  \item textual claims can be checked against source CSV values.
+\end{itemize}
+
+Recent layout updates split dense side-by-side diagnostics into larger single-panel figures for readability in print and PDF viewing.
+
+\section{Quality Controls and Fail-Fast Checks}
+The experimental stack includes several safeguards:
+\begin{itemize}
+  \item protocol assertions for split boundaries and target-policy compatibility,
+  \item prediction artifact audits for duplicate date--ticker rows,
+  \item deterministic ranking logic for tie-breaking consistency,
+  \item explicit baseline context export to avoid ambiguous benchmark interpretation.
+\end{itemize}
+
+These checks reduce the probability of hidden leakage, silent schema drift, or misleading summary tables.
+
+\section{Comparability Constraints}
+To keep model comparisons defensible, the benchmark fixes:
+\begin{itemize}
+  \item the same data universe and split windows,
+  \item the same target definition and horizon,
+  \item the same portfolio-construction template and transaction-cost treatment,
+  \item the same metric definitions and ranking rule.
+\end{itemize}
+As a result, observed differences are attributable primarily to representation choices (non-graph, graph-feature, or end-to-end graph modeling), not to changing experimental context.
+
+\section{Residual Experimental Risks}
+Despite safeguards, some risks remain:
+\begin{itemize}
+  \item single-period test evaluation can be regime-sensitive,
+  \item hyperparameter search depth may differ in effective complexity across model classes,
+  \item static edge construction may miss higher-frequency relational dynamics.
+\end{itemize}
+These risks are explicitly discussed in the conclusion and guide the follow-up research agenda.

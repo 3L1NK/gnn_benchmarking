@@ -1,0 +1,21 @@
+Financial return forecasting is a high-noise prediction problem in which small statistical edges can still matter economically when converted into disciplined portfolio decisions. Under market efficiency arguments, such edges should be weak and unstable, so robust out-of-sample evaluation is essential \citep{fama1970efficient}. At the same time, assets are not independent: sector membership, co-movement structure, and lead-lag effects create relational dependencies that standard tabular or sequence models do not represent explicitly.
+
+Graph-based learning is a natural fit for this setting. Graph neural networks (GNNs) encode assets as nodes and relations as edges, enabling information propagation across connected stocks \citep{kipf2017semi,velickovic2018gat,hamilton2017inductive}. In parallel, graph-feature approaches such as Node2Vec embeddings can inject relational information into strong non-graph learners \citep{grover2016node2vec,chen2016xgboost}. Recent finance-focused studies and surveys suggest that this relational signal can be useful, but empirical conclusions still vary across datasets and protocols \citep{local_review_gnn_finance_methods,local_gnn_review_methods_applications,local_graph_neural_networks_asset_management,local_graph_neural_networks_portfolio_optimization,local_benchmarking_ml_stock_prediction}.
+
+The central objective of this thesis is therefore to test whether graph-aware modeling improves practical portfolio outcomes under one strict benchmark protocol with reproducible artifacts.
+
+Research questions:
+\begin{enumerate}
+  \item Do graph-based models improve predictive quality for next-day return forecasting?
+  \item Which edge construction signals (correlation, sector, Granger, or combinations) are most useful?
+  \item Do prediction gains translate into better risk-adjusted portfolio performance?
+  \item How sensitive are conclusions to rebalancing frequency and trading turnover?
+\end{enumerate}
+
+Main contributions:
+\begin{itemize}
+  \item A unified benchmark protocol (\texttt{v1\_thesis\_core}) with fixed data splits and portfolio policy.
+  \item Side-by-side comparison of non-graph, graph-feature, and end-to-end GNN families.
+  \item Reproducible model and portfolio artifacts plus thesis-ready tables/figures generated directly from run ledgers.
+  \item A tuned-model analysis on the 2020--2024 test window that quantifies both ranking skill and deployable risk-adjusted performance.
+\end{itemize}

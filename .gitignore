@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *.ipynb_checkpoints
+.pytest_cache
+.mplconfig
 
 # Virtual environment
 .venv/
@@ -15,3 +17,5 @@ logs/
 
 #cache
 cache/
+
+papers/

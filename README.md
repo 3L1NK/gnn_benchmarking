@@ -92,3 +92,18 @@ This generates:
 - `equity_curves_key_models.png`
 - `ic_distribution_boxplot_reb1.png`, `ic_distribution_boxplot_reb5.png`
 - thesis plots under `results/reports/thesis/`
+
+## Write Thesis in LaTeX (In-Repo)
+
+A thesis writing workspace is available under:
+
+- `thesis/`
+
+From there you can:
+
+```bash
+cd thesis
+make pdf
+```
+
+This will regenerate LaTeX tables from `results/reports/thesis/*.csv` and compile `thesis/main.tex`.
