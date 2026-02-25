@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from .metrics import portfolio_metrics
+from .metrics import portfolio_metrics, validate_portfolio_series
 
 def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
     """
@@ -34,6 +34,7 @@ def backtest_buy_and_hold(price_panel, risk_free_rate=0.0):
 
     eq_series = pd.Series(equity, index=ret_df.index)
 
+    validate_portfolio_series(eq_series, port_ret)
     stats = portfolio_metrics(eq_series, port_ret, risk_free_rate)
 
     return eq_series, port_ret, stats
@@ -121,6 +122,7 @@ def backtest_long_only(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rate
         index=[d for d, _ in equity_curve],
     )
 
+    validate_portfolio_series(eq_series, daily_returns)
     stats = portfolio_metrics(eq_series, daily_returns, risk_free_rate)
     stats["avg_turnover"] = float(np.mean(daily_turnover)) if daily_turnover else 0.0
 
@@ -216,6 +218,7 @@ def backtest_long_short(pred_df, top_k=20, transaction_cost_bps=5, risk_free_rat
         index=[d for d, _ in equity_curve],
     )
 
+    validate_portfolio_series(eq_series, daily_returns)
     stats = portfolio_metrics(eq_series, daily_returns, risk_free_rate)
     stats["avg_turnover"] = turnover / len(dates) if dates else 0.0
 

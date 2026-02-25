@@ -165,7 +165,7 @@ The ranking logic is deterministic and risk-adjusted first:
 3. `prediction_rank_ic` descending,
 4. `portfolio_turnover` ascending.
 
-The compact ranking output is `results/reports/thesis/decision_ranking.csv`.
+The compact ranking output is `results/reports/thesis_tuned_all/decision_ranking.csv`.
 
 ## 8. Public Interfaces and Schemas Updated
 
@@ -212,7 +212,7 @@ Supported keys:
 
 | Artifact | Path | Produced by | Purpose |
 |---|---|---|---|
-| run results ledger | `results/results.jsonl` | `utils/eval_runner.py` | unified row-per-run-per-policy results table |
+| run results ledger | `results/results_tuned_all.jsonl` | `utils/eval_runner.py` | unified row-per-run-per-policy results table |
 | retune results ledger | `results/results_retune.jsonl` | retune configs + eval runner | isolated retune output |
 | run summary | `experiments/<run_tag>/<run_tag>_summary.json` | `utils/eval_runner.py` | stats + baseline_context + per-policy detail |
 | model predictions | `experiments/<run_tag>/<model>_predictions.csv` | trainer + eval runner | raw prediction audit and diagnostics |
@@ -220,12 +220,12 @@ Supported keys:
 | model equity | `experiments/<run_tag>/<model>_equity_curve_reb{1,5}.csv` | eval runner | policy-specific equity path |
 | buy-and-hold window baseline | `experiments/<run_tag>/buy_and_hold_equity_curve.csv` | eval runner | sliced/rebased baseline for fair test-window comparison |
 | equal-weight baseline | `experiments/<run_tag>/equal_weight_equity_curve_reb{1,5}.csv` | eval runner | additional reference baseline |
-| master report table | `results/reports/thesis/master_comparison.csv` | `scripts/generate_thesis_report.py` | full ranked comparison table |
-| family summary | `results/reports/thesis/family_summary.csv` | report script | best-by-family compact view |
-| edge ablation summary | `results/reports/thesis/edge_ablation_summary.csv` | report script | edge-type aggregated performance |
-| baseline context report | `results/reports/thesis/baseline_context.csv` | report script | explicit global vs test baseline window context |
-| decision ranking | `results/reports/thesis/decision_ranking.csv` | report script | deterministic risk-adjusted ranking |
-| risk frontier | `results/reports/thesis/risk_frontier_reb1.png`, `risk_frontier_reb5.png` | report script | annualized return vs drawdown; point size by annualized Sharpe |
+| master report table | `results/reports/thesis_tuned_all/master_comparison.csv` | `scripts/generate_thesis_report.py` | full ranked comparison table |
+| family summary | `results/reports/thesis_tuned_all/family_summary.csv` | report script | best-by-family compact view |
+| edge ablation summary | `results/reports/thesis_tuned_all/edge_ablation_summary.csv` | report script | edge-type aggregated performance |
+| baseline context report | `results/reports/thesis_tuned_all/baseline_context.csv` | report script | explicit global vs test baseline window context |
+| decision ranking | `results/reports/thesis_tuned_all/decision_ranking.csv` | report script | deterministic risk-adjusted ranking |
+| risk frontier | `results/reports/thesis_tuned_all/risk_frontier_reb1.png`, `risk_frontier_reb5.png` | report script | annualized return vs drawdown; point size by annualized Sharpe |
 | retune deltas | `results/reports/retune_comparison/retune_delta_summary.csv` | `scripts/compare_core_vs_retune.py` | retune-minus-core deltas |
 | retune winners | `results/reports/retune_comparison/retune_winners.csv` | compare script | models that pass fixed winner rule |
 
@@ -234,12 +234,12 @@ Supported keys:
 1. Each training run writes prediction/equity/metrics artifacts under its `out_dir`.
 2. `utils/eval_runner.py` appends standardized rows to results JSONL.
 3. `scripts/generate_thesis_report.py` reads JSONL and resolves run artifacts.
-4. It emits thesis CSV summaries and plot files in `results/reports/thesis`.
+4. It emits thesis CSV summaries and plot files in `results/reports/thesis_tuned_all`.
 
 Command:
 
 ```bash
-python scripts/generate_thesis_report.py --results results/results.jsonl --out results/reports/thesis
+python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 26
 ```
 
 ## 11. Targeted Retune Workflow
@@ -307,10 +307,10 @@ python scripts/compare_core_vs_retune.py
 
 | Thesis question | Artifact(s) to inspect | Metric evidence | Decision interpretation |
 |---|---|---|---|
-| Are graph models better than non-graph baselines? | `results/reports/thesis/family_summary.csv`, `master_comparison.csv` | `portfolio_sharpe_annualized`, `portfolio_max_drawdown`, `prediction_rank_ic` | If graph family dominates on Sharpe with acceptable drawdown, graph approach is supported. |
-| Which edge signal works best? | `results/reports/thesis/edge_ablation_summary.csv` | edge-type mean Sharpe/return/drawdown | Higher Sharpe and better drawdown for an edge type indicates stronger signal utility. |
+| Are graph models better than non-graph baselines? | `results/reports/thesis_tuned_all/family_summary.csv`, `master_comparison.csv` | `portfolio_sharpe_annualized`, `portfolio_max_drawdown`, `prediction_rank_ic` | If graph family dominates on Sharpe with acceptable drawdown, graph approach is supported. |
+| Which edge signal works best? | `results/reports/thesis_tuned_all/edge_ablation_summary.csv` | edge-type mean Sharpe/return/drawdown | Higher Sharpe and better drawdown for an edge type indicates stronger signal utility. |
 | Do prediction gains monetize after costs? | `master_comparison.csv`, per-run `*_daily_metrics_reb*.csv` | IC vs realized annualized return and drawdown | Positive IC without portfolio improvement implies translation failure after portfolio construction/costs. |
-| Which model is best for decision use? | `results/reports/thesis/decision_ranking.csv`, `risk_frontier_reb*.png` | deterministic ranking order and frontier position | Top-ranked models combine risk-adjusted return quality and operational frictions. |
+| Which model is best for decision use? | `results/reports/thesis_tuned_all/decision_ranking.csv`, `risk_frontier_reb*.png` | deterministic ranking order and frontier position | Top-ranked models combine risk-adjusted return quality and operational frictions. |
 | Does medium retune improve top models safely? | `results/reports/retune_comparison/retune_delta_summary.csv`, `retune_winners.csv` | delta Sharpe and drawdown constraint | Winner rows identify safe improvements; empty winners implies no robust improvement in this pass. |
 
 ## 14. What Changed in This Cycle
@@ -333,7 +333,7 @@ If your existing report CSVs were generated before these changes, they can be st
 Regenerate using:
 
 ```bash
-python scripts/generate_thesis_report.py --results results/results.jsonl --out results/reports/thesis
+python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 26
 ```
 
 For retune outputs:

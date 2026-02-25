@@ -16,7 +16,13 @@ from .baseline import (
     get_equal_weight_for_window,
     write_baseline_curve_csv,
 )
-from .metrics import rank_ic, hit_rate, sharpe_ratio
+from .metrics import (
+    annualized_sharpe_from_returns,
+    hit_rate,
+    rank_ic,
+    sharpe_ratio,
+    validate_portfolio_series,
+)
 from .plot import (
     plot_daily_ic,
     plot_ic_hist,
@@ -136,6 +142,26 @@ def evaluate_and_report(
         eq_series = equity_curve.copy()
         eq_series.index = pd.to_datetime(eq_series.index)
         daily_ret_series = pd.Series(daily_ret, index=eq_series.index[: len(daily_ret)])
+        try:
+            validate_portfolio_series(eq_series, daily_ret_series.values)
+        except ValueError as exc:
+            raise ValueError(f"[{run_name} reb={int(freq)}] {exc}") from exc
+
+        sharpe_ann = float(stats.get("sharpe_annualized", float("nan")))
+        if not np.isfinite(sharpe_ann):
+            fallback = annualized_sharpe_from_returns(
+                daily_ret_series.values,
+                risk_free_rate=float(config["evaluation"]["risk_free_rate"]),
+                periods_per_year=252,
+            )
+            if not np.isfinite(fallback):
+                raise ValueError(
+                    f"[{run_name} reb={int(freq)}] unable to compute annualized Sharpe from daily returns."
+                )
+            stats["sharpe_annualized"] = float(fallback)
+        if not np.isfinite(float(stats.get("sharpe", float("nan")))):
+            stats["sharpe"] = float(stats["sharpe_annualized"] / np.sqrt(252.0))
+
         dd = eq_series / eq_series.cummax() - 1.0
 
         metrics = daily_metrics_ic.merge(
@@ -149,6 +175,18 @@ def evaluate_and_report(
             on="date",
             how="left",
         )
+        metrics = metrics.sort_values("date").reset_index(drop=True)
+        if not pd.to_datetime(metrics["date"], errors="coerce").is_monotonic_increasing:
+            raise ValueError(f"[{run_name} reb={int(freq)}] metrics dates are not monotonic increasing.")
+        missing_daily = int(pd.to_numeric(metrics["daily_return"], errors="coerce").isna().sum())
+        if missing_daily > 0:
+            raise ValueError(
+                f"[{run_name} reb={int(freq)}] metrics contain {missing_daily} missing daily_return values."
+            )
+        if len(metrics) != len(daily_ret_series):
+            raise ValueError(
+                f"[{run_name} reb={int(freq)}] metrics length {len(metrics)} does not match return length {len(daily_ret_series)}."
+            )
 
         metrics_path = out_dir / f"{run_name}_daily_metrics_reb{freq}.csv"
         metrics.to_csv(metrics_path, index=False)

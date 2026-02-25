@@ -3,19 +3,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+os.environ.setdefault("MPLCONFIGDIR", str(REPO_ROOT / ".mplconfig"))
+
+import matplotlib
+
+matplotlib.use("Agg", force=True)
+import matplotlib.pyplot as plt
 
 from utils.prediction_audit import assert_no_prediction_artifact_issues
+from utils.metrics import annualized_sharpe_from_returns
 
 
 KEY_METRICS = [
@@ -118,17 +125,21 @@ def _pick_latest_rows(master: pd.DataFrame) -> pd.DataFrame:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     else:
         df["timestamp"] = pd.NaT
-    key_cols = ["run_tag", "model_name", "edge_type", "rebalance_freq", "target_policy_hash"]
     group_key_cols: List[str] = []
-    for col in key_cols:
-        if col not in df.columns:
-            df[col] = pd.NA
-        gcol = f"__group_{col}"
-        if col == "rebalance_freq":
-            df[gcol] = pd.to_numeric(df[col], errors="coerce").fillna(-1).astype(int)
-        else:
-            df[gcol] = df[col].astype("string").fillna("__NA__")
-        group_key_cols.append(gcol)
+    if "run_key" in df.columns and df["run_key"].astype("string").fillna("").str.len().gt(0).any():
+        df["__group_run_key"] = df["run_key"].astype("string").fillna("__NA__")
+        group_key_cols = ["__group_run_key"]
+    else:
+        key_cols = ["run_tag", "model_name", "edge_type", "rebalance_freq", "target_policy_hash"]
+        for col in key_cols:
+            if col not in df.columns:
+                df[col] = pd.NA
+            gcol = f"__group_{col}"
+            if col == "rebalance_freq":
+                df[gcol] = pd.to_numeric(df[col], errors="coerce").fillna(-1).astype(int)
+            else:
+                df[gcol] = df[col].astype("string").fillna("__NA__")
+            group_key_cols.append(gcol)
     df = df.sort_values("timestamp")
     latest = df.groupby(group_key_cols, as_index=False, dropna=False).tail(1).reset_index(drop=True)
     latest = latest.drop(columns=group_key_cols, errors="ignore")
@@ -140,6 +151,56 @@ def _best_by_group(df: pd.DataFrame, group_cols: List[str], score_col: str = "po
         return df.copy()
     ranked = df.sort_values(score_col, ascending=False)
     return ranked.groupby(group_cols, as_index=False).head(1).reset_index(drop=True)
+
+
+def _fill_annualized_sharpe(raw: pd.DataFrame) -> pd.DataFrame:
+    out = raw.copy()
+    out["portfolio_sharpe"] = pd.to_numeric(out.get("portfolio_sharpe"), errors="coerce")
+    if "portfolio_sharpe_daily" not in out.columns:
+        out["portfolio_sharpe_daily"] = out["portfolio_sharpe"]
+    out["portfolio_sharpe_daily"] = pd.to_numeric(out["portfolio_sharpe_daily"], errors="coerce")
+    if "portfolio_sharpe_annualized" not in out.columns:
+        out["portfolio_sharpe_annualized"] = pd.NA
+    out["portfolio_sharpe_annualized"] = pd.to_numeric(out["portfolio_sharpe_annualized"], errors="coerce")
+
+    missing_ann = out["portfolio_sharpe_annualized"].isna()
+    if missing_ann.any():
+        out.loc[missing_ann, "portfolio_sharpe_annualized"] = (
+            out.loc[missing_ann, "portfolio_sharpe_daily"] * np.sqrt(252.0)
+        )
+
+    # Final fallback from daily return artifacts for rows that remain missing.
+    still_missing_idx = out.index[out["portfolio_sharpe_annualized"].isna()].tolist()
+    for idx in still_missing_idx:
+        row = out.loc[idx]
+        freq = int(pd.to_numeric(row.get("rebalance_freq"), errors="coerce")) if pd.notna(row.get("rebalance_freq")) else 1
+        metrics_path = _daily_metrics_path(row, freq)
+        if not metrics_path.exists():
+            continue
+        try:
+            m = pd.read_csv(metrics_path)
+        except Exception:
+            continue
+        if "daily_return" not in m.columns:
+            continue
+        sharpe = annualized_sharpe_from_returns(pd.to_numeric(m["daily_return"], errors="coerce").dropna().values)
+        if np.isfinite(sharpe):
+            out.at[idx, "portfolio_sharpe_annualized"] = float(sharpe)
+            if pd.isna(out.at[idx, "portfolio_sharpe_daily"]):
+                out.at[idx, "portfolio_sharpe_daily"] = float(sharpe / np.sqrt(252.0))
+            if pd.isna(out.at[idx, "portfolio_sharpe"]):
+                out.at[idx, "portfolio_sharpe"] = float(sharpe / np.sqrt(252.0))
+    return out
+
+
+def _assert_no_nan_metrics(df: pd.DataFrame, metric_cols: List[str]) -> None:
+    for col in metric_cols:
+        if col not in df.columns:
+            raise ValueError(f"Missing required metric column '{col}' in report dataframe.")
+        series = pd.to_numeric(df[col], errors="coerce")
+        n_nan = int(series.isna().sum())
+        if n_nan > 0:
+            raise ValueError(f"Found {n_nan} NaN values in required metric column '{col}'.")
 
 
 def _read_curve_csv(path: Path) -> Optional[pd.Series]:
@@ -409,12 +470,12 @@ def _build_decision_ranking(latest_df: pd.DataFrame) -> pd.DataFrame:
     return ranked[keep_cols].copy()
 
 
-def _plot_risk_frontier(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
+def _plot_risk_frontier(df: pd.DataFrame, out_dir: Path, freq: int) -> int:
     if df.empty:
-        return
+        return 0
     d = df.dropna(subset=["portfolio_annualized_return", "portfolio_max_drawdown", "portfolio_sharpe_annualized"]).copy()
     if d.empty:
-        return
+        return 0
     d["label"] = d.apply(_run_label, axis=1)
     sharpes = pd.to_numeric(d["portfolio_sharpe_annualized"], errors="coerce").fillna(0.0)
     sizes = (sharpes.clip(lower=0.0) + 0.05) * 900.0
@@ -438,6 +499,7 @@ def _plot_risk_frontier(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
     plt.tight_layout()
     plt.savefig(out_dir / f"risk_frontier_reb{freq}.png", dpi=220)
     plt.close()
+    return int(len(d))
 
 
 def _plot_metric_bars(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
@@ -473,12 +535,12 @@ def _plot_metric_bars(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
     plt.close(fig)
 
 
-def _plot_ic_vs_sharpe(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
+def _plot_ic_vs_sharpe(df: pd.DataFrame, out_dir: Path, freq: int) -> int:
     if df.empty:
-        return
+        return 0
     d = df.dropna(subset=["prediction_rank_ic", "portfolio_sharpe_annualized"]).copy()
     if d.empty:
-        return
+        return 0
     d["label"] = d.apply(_run_label, axis=1)
 
     plt.figure(figsize=(10, 7))
@@ -492,6 +554,7 @@ def _plot_ic_vs_sharpe(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
     plt.tight_layout()
     plt.savefig(out_dir / f"ic_vs_sharpe_reb{freq}.png", dpi=220)
     plt.close()
+    return int(len(d))
 
 
 def _plot_ic_bar(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
@@ -619,7 +682,35 @@ def _plot_equity_panels(latest_df: pd.DataFrame, out_dir: Path, frequencies: Lis
         plt.close(fig_single)
 
 
-def generate_reports(results_path: Path, out_dir: Path) -> None:
+def _build_run_matrix(latest_df: pd.DataFrame) -> pd.DataFrame:
+    cols = [
+        "run_key",
+        "run_tag",
+        "model_family",
+        "model_name",
+        "edge_type",
+        "seed",
+        "target_type",
+        "target_horizon",
+        "rebalance_freq",
+        "split_id",
+        "config_hash",
+    ]
+    out = latest_df.copy()
+    for col in cols:
+        if col not in out.columns:
+            out[col] = pd.NA
+    out["inclusion_status"] = "included"
+    out = out[cols + ["inclusion_status"]].copy()
+    out["rebalance_freq"] = pd.to_numeric(out["rebalance_freq"], errors="coerce").astype("Int64")
+    out = out.sort_values(
+        ["rebalance_freq", "model_family", "model_name", "edge_type", "seed", "run_tag", "run_key"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+    return out
+
+
+def generate_reports(results_path: Path, out_dir: Path, *, expected_runs: Optional[int] = None) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     raw = _safe_read_results(results_path)
     raw = _ensure_columns(
@@ -636,31 +727,74 @@ def generate_reports(results_path: Path, out_dir: Path) -> None:
             "out_dir",
             "artifact_prefix",
             "target_policy_hash",
+            "split_id",
+            "config_hash",
+            "run_key",
         ],
     )
-    raw["portfolio_sharpe"] = pd.to_numeric(raw["portfolio_sharpe"], errors="coerce")
-    if "portfolio_sharpe_daily" not in raw.columns:
-        raw["portfolio_sharpe_daily"] = raw["portfolio_sharpe"]
-    raw["portfolio_sharpe_daily"] = pd.to_numeric(raw["portfolio_sharpe_daily"], errors="coerce")
-    if "portfolio_sharpe_annualized" not in raw.columns:
-        raw["portfolio_sharpe_annualized"] = raw["portfolio_sharpe_daily"] * np.sqrt(252.0)
-    raw["portfolio_sharpe_annualized"] = pd.to_numeric(raw["portfolio_sharpe_annualized"], errors="coerce")
+    raw = _fill_annualized_sharpe(raw)
     raw["rebalance_freq"] = pd.to_numeric(raw["rebalance_freq"], errors="coerce").fillna(1).astype(int)
 
-    master = raw.sort_values(["rebalance_freq", "portfolio_sharpe_annualized"], ascending=[True, False]).reset_index(drop=True)
+    sort_cols = [
+        "rebalance_freq",
+        "portfolio_sharpe_annualized",
+        "portfolio_max_drawdown",
+        "prediction_rank_ic",
+        "portfolio_turnover",
+        "run_key",
+        "run_tag",
+    ]
+    for col in sort_cols:
+        if col not in raw.columns:
+            raw[col] = pd.NA
+    raw_sorted = raw.sort_values(
+        sort_cols,
+        ascending=[True, False, False, False, True, True, True],
+        kind="mergesort",
+    ).reset_index(drop=True)
+    raw_sorted.to_csv(out_dir / "master_comparison_raw.csv", index=False)
+
+    latest = _pick_latest_rows(raw_sorted)
+    latest["category"] = latest.apply(_classify_category, axis=1)
+    latest = latest.sort_values(
+        sort_cols,
+        ascending=[True, False, False, False, True, True, True],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
+    _assert_no_nan_metrics(
+        latest,
+        [
+            "portfolio_sharpe_annualized",
+            "portfolio_annualized_return",
+            "portfolio_max_drawdown",
+            "portfolio_turnover",
+            "prediction_rank_ic",
+        ],
+    )
+
+    run_matrix = _build_run_matrix(latest)
+    run_matrix.to_csv(out_dir / "run_matrix.csv", index=False)
+    if expected_runs is not None and len(run_matrix) != int(expected_runs):
+        raise ValueError(
+            f"Run matrix size mismatch: expected {int(expected_runs)} rows, found {len(run_matrix)} rows."
+        )
+
+    master = latest.copy()
     master.to_csv(out_dir / "master_comparison.csv", index=False)
 
-    latest = _pick_latest_rows(master)
-    latest["category"] = latest.apply(_classify_category, axis=1)
-
     family_summary = _best_by_group(
-        latest[latest["category"].isin({"non_graph", "graph_feature", "static_gnn", "static_temporal_labeled"})],
+        master[master["category"].isin({"non_graph", "graph_feature", "static_gnn", "static_temporal_labeled"})],
         ["rebalance_freq", "category"],
     )
     family_summary = family_summary.sort_values(["rebalance_freq", "category"]).reset_index(drop=True)
     family_summary.to_csv(out_dir / "family_summary.csv", index=False)
 
-    edge_df = latest[(latest["model_name"].isin(["gcn", "gat"])) & latest["edge_type"].notna()].copy()
+    edge_df = master[
+        (master["model_name"].isin(["gcn", "gat"]))
+        & master["edge_type"].notna()
+        & ~master["edge_type"].astype("string").str.lower().isin({"", "nan", "none"})
+    ].copy()
     if edge_df.empty:
         edge_agg = pd.DataFrame(columns=["rebalance_freq", "edge_type", "model_count"] + KEY_METRICS)
     else:
@@ -684,32 +818,54 @@ def generate_reports(results_path: Path, out_dir: Path) -> None:
         )
     edge_agg.to_csv(out_dir / "edge_ablation_summary.csv", index=False)
 
-    decision_ranking = _build_decision_ranking(latest)
+    decision_ranking = _build_decision_ranking(master)
     decision_ranking.to_csv(out_dir / "decision_ranking.csv", index=False)
-    _write_baseline_context_csv(latest, out_dir)
+    _write_baseline_context_csv(master, out_dir)
 
-    freqs = sorted(latest["rebalance_freq"].dropna().unique().tolist())
+    freqs = sorted(master["rebalance_freq"].dropna().unique().tolist())
     for freq in freqs:
-        freq_df = latest[latest["rebalance_freq"] == int(freq)].copy()
+        freq_df = master[master["rebalance_freq"] == int(freq)].copy()
         if freq_df.empty:
             continue
         _plot_metric_bars(freq_df, out_dir, int(freq))
         _plot_ic_bar(freq_df, out_dir, int(freq))
         _plot_ic_distribution_boxplot(freq_df, out_dir, int(freq))
-        _plot_ic_vs_sharpe(freq_df, out_dir, int(freq))
-        _plot_risk_frontier(freq_df, out_dir, int(freq))
+        expected_ic_points = int(
+            freq_df.dropna(subset=["prediction_rank_ic", "portfolio_sharpe_annualized"]).shape[0]
+        )
+        actual_ic_points = _plot_ic_vs_sharpe(freq_df, out_dir, int(freq))
+        if actual_ic_points != expected_ic_points:
+            raise ValueError(
+                f"IC-vs-Sharpe point mismatch for rebalance {int(freq)}: expected {expected_ic_points}, got {actual_ic_points}."
+            )
+        if expected_ic_points > 1 and actual_ic_points <= 1:
+            raise ValueError(f"IC-vs-Sharpe plot for rebalance {int(freq)} has <=1 point unexpectedly.")
 
-    _plot_equity_panels(latest, out_dir, freqs)
+        expected_risk_points = int(
+            freq_df.dropna(
+                subset=["portfolio_annualized_return", "portfolio_max_drawdown", "portfolio_sharpe_annualized"]
+            ).shape[0]
+        )
+        actual_risk_points = _plot_risk_frontier(freq_df, out_dir, int(freq))
+        if actual_risk_points != expected_risk_points:
+            raise ValueError(
+                f"Risk-frontier point mismatch for rebalance {int(freq)}: expected {expected_risk_points}, got {actual_risk_points}."
+            )
+        if expected_risk_points > 1 and actual_risk_points <= 1:
+            raise ValueError(f"Risk-frontier plot for rebalance {int(freq)} has <=1 point unexpectedly.")
+
+    _plot_equity_panels(master, out_dir, freqs)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate thesis-ready benchmark tables and plots.")
-    parser.add_argument("--results", type=str, default="results/results.jsonl")
-    parser.add_argument("--out", type=str, default="results/reports/thesis")
+    parser.add_argument("--results", type=str, default="results/results_tuned_all.jsonl")
+    parser.add_argument("--out", type=str, default="results/reports/thesis_tuned_all")
+    parser.add_argument("--expected-runs", type=int, default=None)
     parser.add_argument(
         "--prediction-root",
         action="append",
-        default=["experiments"],
+        default=["experiments_tuned_all", "experiments"],
         help="Prediction artifact root to audit before report generation. Can be repeated.",
     )
     parser.add_argument(
@@ -723,7 +879,10 @@ def main() -> None:
         files = assert_no_prediction_artifact_issues(args.prediction_root)
         print(f"[report] prediction audit passed across {len(files)} file(s)")
 
-    generate_reports(Path(args.results), Path(args.out))
+    expected_runs = args.expected_runs
+    if expected_runs is None and "results_tuned_all" in str(args.results):
+        expected_runs = 26
+    generate_reports(Path(args.results), Path(args.out), expected_runs=expected_runs)
     print(f"[report] wrote thesis artifacts to {Path(args.out).resolve()}")
 
 

@@ -1,54 +1,54 @@
-This thesis examined whether graph-aware modeling improves next-day multi-asset forecasting and downstream portfolio outcomes under one reproducible benchmark protocol. The central result is nuanced: relational information is clearly useful, but the strongest performer is a graph-feature hybrid (\texttt{xgb\_node2vec\_corr}) rather than a universal end-to-end GNN winner.
+This thesis evaluated graph-aware and non-graph models for next-day multi-asset forecasting under one fixed protocol with reproducible artifact generation.
 
-\section{Answers to the Research Questions}
-\textbf{RQ1: Do graph-based approaches improve predictive quality?}  
-Partially. End-to-end GNNs do not dominate all criteria, but graph-aware representations improve decision quality in competitive variants and materially contribute to the top hybrid model.
+\section{Direct Answers to Research Questions}
+\textbf{RQ1: Do graph-based approaches improve predictive quality?}
+Partially. Graph-aware information is valuable, but the strongest result is a graph-feature hybrid (Node2Vec + XGBoost) rather than a universal end-to-end GNN winner.
 
-\textbf{RQ2: Which edge signals are most reliable in this benchmark?}  
-Sector-driven edges produce the strongest average GNN outcomes across rebalance policies. Correlation-only and mixed-edge variants can be competitive in specific runs, but they are less consistently robust in aggregate.
+\textbf{RQ2: Which edge signals are most reliable in this benchmark?}
+Sector-based edges are the most stable average performer for GNN variants. Correlation-only and merged-edge designs can work in selected runs but are less robust on average.
 
-\textbf{RQ3: Do predictive gains translate into portfolio gains?}  
-Yes, but with constraints. Ranking quality gains can improve risk-adjusted metrics, yet absolute wealth outcomes remain below the buy-and-hold benchmark in the 2020--2024 test regime.
+\textbf{RQ3: Do prediction gains translate into portfolio gains?}
+Partially. Relative improvements in risk-adjusted metrics are present across learned models, yet absolute final wealth remains below buy-and-hold in this test regime.
 
-\section{Main Empirical Conclusions}
+\textbf{RQ4: How sensitive are conclusions to rebalance policy?}
+Highly sensitive. Weekly rebalancing consistently lowers turnover and typically improves annualized Sharpe versus daily trading.
+
+\section{Strongest Supported Claim}
+The strongest defensible claim is:
+\begin{quote}
+Under a fixed leakage-aware protocol and explicit transaction costs, relational information improves model selection quality, but implementation policy (especially rebalancing frequency) is as important as architecture choice for deployable performance.
+\end{quote}
+
+\section{What Was Fixed in the Thesis Production Stack}
+The final pipeline now enforces:
 \begin{itemize}
-  \item Weekly rebalancing (\texttt{rebalance\_freq=5}) consistently improves annualized Sharpe and lowers turnover versus daily rebalancing.
-  \item The top run (\texttt{xgb\_node2vec\_corr\_tuned\_all}, reb5) reaches annualized Sharpe 0.806 with final value 2.011.
-  \item On family averages, XGBoost variants lead risk-adjusted performance, while GNNs remain competitive but not dominant.
-  \item Edge ablation indicates that added graph complexity does not automatically improve deployment quality.
+  \item stable run identity (\texttt{run\_key}, \texttt{split\_id}, \texttt{config\_hash}),
+  \item ledger-level deduplication (latest run wins),
+  \item fail-fast metric checks (no empty/constant return series),
+  \item canonical report generation from tuned-all ledger,
+  \item run-matrix size and plot-point sanity checks,
+  \item bibliography quality checks blocking placeholder references.
 \end{itemize}
-
-\section{Methodological Contributions}
-Beyond model comparison, this work contributes an operational thesis framework:
-\begin{itemize}
-  \item a single leakage-aware split and target-policy contract,
-  \item an artifact-first experimental ledger for reproducible reporting,
-  \item deterministic decision ranking aligned with deployable constraints,
-  \item direct synchronization between experiment outputs and LaTeX tables/figures.
-\end{itemize}
-This structure supports transparent reruns and reduces manual reporting error.
-
-\section{Practical Interpretation}
-From a deployment perspective, the benchmark supports a pragmatic strategy: use graph signal where it is robust, but avoid architecture complexity that is not justified by incremental risk-adjusted gains. In this dataset and regime, hybrid graph-feature pipelines currently offer the strongest balance between performance and operational stability.
+These controls directly address reviewer-risk issues (NaNs, duplicates, one-point plots, and citation placeholders).
 
 \section{Limitations}
-Several limitations bound external validity:
+The conclusions are bounded by:
 \begin{itemize}
-  \item single historical test regime (2020--2024) with strong macro and sector rotations,
-  \item fixed long-only top-$k$ execution that may mask alpha in alternative constructions,
-  \item incomplete uncertainty quantification from limited seed expansion on neural variants,
-  \item static edge definitions that may underrepresent rapidly changing cross-asset links.
+  \item one US-focused universe and one dominant test regime (2020--2024),
+  \item a single long-only top-$k$ portfolio mapping,
+  \item limited seed expansion relative to full uncertainty quantification,
+  \item mostly static graph construction assumptions.
 \end{itemize}
 
 \section{Future Work}
-High-priority follow-up work includes:
-\begin{itemize}
-  \item transaction-cost sensitivity sweeps (e.g., 0/5/10 bps) across all models,
-  \item multi-seed and block-bootstrap confidence intervals for ranking stability,
-  \item dynamic graph refresh policies and stricter time-indexed edge validation,
-  \item market-neutral long-short and risk-budgeted portfolio overlays,
-  \item broader cross-market validation to test transferability.
-\end{itemize}
+High-priority extensions are:
+\begin{enumerate}
+  \item transaction-cost sensitivity sweeps (0/5/10+ bps) across the full matrix,
+  \item multi-seed and block-bootstrap confidence intervals for rank stability,
+  \item rolling-window and regime-segmented evaluation,
+  \item dynamic graph refresh policies with stricter time-index validation,
+  \item alternative portfolio mappings (risk-budgeted, market-neutral, constrained long-short).
+\end{enumerate}
 
 \section{Final Statement}
-The evidence supports a restrained conclusion: graph structure is valuable for equity forecasting, but value is context-dependent and best realized through disciplined benchmarking, strict causal evaluation, and robust portfolio-aware selection criteria.
+The evidence supports a restrained conclusion: graph structure is useful, but claims must remain protocol-conditional and portfolio-aware. Robust thesis-grade benchmarking requires not only model experimentation, but also strong reporting integrity, reproducibility contracts, and citation quality discipline.

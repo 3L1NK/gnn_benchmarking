@@ -1,10 +1,19 @@
-This chapter reports tuned benchmark results from \texttt{results/reports/thesis\_tuned\_all/} for the test period January 2, 2020 to December 27, 2024.
+This chapter reports benchmark outcomes generated from \texttt{results/results\_tuned\_all.jsonl} through the hardened reporting pipeline. All tables and figures are synchronized from \texttt{results/reports/thesis\_tuned\_all/}. Every summary in this chapter is derived from the same canonical deduplicated dataframe (\texttt{master\_comparison.csv}) and checked against the 26-row run matrix.
 
-\section{Baseline Context}
-The test-window rebased buy-and-hold baseline reaches a final value of 5.049 (global full-period buy-and-hold: 51.178). This baseline provides an absolute context for model-driven portfolio outcomes. Even the best model in this benchmark (final value 2.011) remains below buy-and-hold over this specific market regime.
+\section{Evaluation Context and Baselines}
+The out-of-sample test window is January~2,~2020 to December~27,~2024. Baseline context is exported explicitly to avoid horizon mismatch between model equity and benchmark equity.
+\input{tables/generated/baseline_context.tex}
 
-\section{Visual Diagnostics}
+The global buy-and-hold curve (from 2000 onward) is substantially higher than the rebased test-window curve by construction, so all comparative statements in this chapter use the test-window baseline only.
 
+\section{Runtime and Compute Profile}
+\input{tables/generated/runtime_summary.tex}
+
+Runtime diagnostics show a strong family-level separation: graph models spend most wall time in training and graph-side preprocessing, while XGBoost variants train quickly and infer almost instantly. This is relevant for deployment engineering, where retraining cadence can dominate architecture choice.
+
+\section{Visual Diagnostics by Rebalance Policy}
+
+\subsection{Equity Trajectories}
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{equity_curves_key_models_reb1.png}
@@ -19,17 +28,18 @@ The test-window rebased buy-and-hold baseline reaches a final value of 5.049 (gl
   \label{fig:equity-curves-reb5}
 \end{figure}
 
+\subsection{Risk-Adjusted and Prediction Trade-Offs}
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{ic_vs_sharpe_reb1.png}
-  \caption{Rank IC versus annualized Sharpe for daily rebalancing (\texttt{rebalance\_freq=1}).}
+  \caption{Rank IC versus annualized Sharpe for daily rebalancing.}
   \label{fig:ic-vs-sharpe-reb1}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{ic_vs_sharpe_reb5.png}
-  \caption{Rank IC versus annualized Sharpe for weekly rebalancing (\texttt{rebalance\_freq=5}).}
+  \caption{Rank IC versus annualized Sharpe for weekly rebalancing.}
   \label{fig:ic-vs-sharpe-reb5}
 \end{figure}
 
@@ -47,34 +57,50 @@ The test-window rebased buy-and-hold baseline reaches a final value of 5.049 (gl
   \label{fig:risk-frontier-reb5}
 \end{figure}
 
-\section{Top-Model Tables}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{bar_metrics_reb1.png}
+  \caption{Top-model metric bars for daily rebalancing.}
+  \label{fig:bar-metrics-reb1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{bar_metrics_reb5.png}
+  \caption{Top-model metric bars for weekly rebalancing.}
+  \label{fig:bar-metrics-reb5}
+\end{figure}
+
+\section{Main Comparison Tables}
 \input{tables/generated/top_models_reb1.tex}
 \input{tables/generated/top_models_reb5.tex}
 \input{tables/generated/family_summary.tex}
 \input{tables/generated/edge_ablation.tex}
 
-\section{Key Findings}
-\textbf{1) Weekly rebalancing consistently improves deployable quality.}
-Across all 13 model variants with both policies, weekly rebalancing increases annualized Sharpe and reduces turnover. Sharpe improvement ranges from +0.028 to +0.248, while turnover collapses from roughly 0.37--0.60 (daily) to around 0.13--0.15 (weekly).
+\section{Primary Findings}
+\textbf{1) Weekly rebalancing is systematically better in this benchmark.}
+Across the 13 model variants, moving from daily to weekly rebalancing improves annualized Sharpe and reduces turnover for the majority of runs. This is consistent with lower implementation friction from less frequent trading.
 
-\textbf{2) The best overall model is the graph-feature baseline.}
-\texttt{xgb\_node2vec\_corr\_tuned\_all} is rank 1 in the decision table for rebalance frequency 5, with annualized Sharpe 0.806, Rank IC 0.016, turnover 0.136, and final value 2.011. Relative to test buy-and-hold (5.049), this equals 39.8\% of benchmark final wealth.
+\textbf{2) The top overall run is the graph-feature baseline.}
+\texttt{xgb\_node2vec\_corr\_tuned\_all} is rank-1 under \texttt{rebalance\_freq=5}, with strong Sharpe and competitive drawdown. The result supports the claim that relational information is useful even when injected as features into a non-graph learner.
 
-\textbf{3) Point-error dispersion is small, ranking dispersion is larger.}
-RMSE values are tightly concentrated (0.01994 to 0.02044) and MAE values are similarly close (0.01313 to 0.01336), while Rank IC varies from -0.0077 to 0.0160. This supports using ranking and portfolio metrics as primary discriminators.
+\textbf{3) Prediction metrics and portfolio metrics are related but not equivalent.}
+RMSE/MAE spread is narrow relative to the spread in Rank IC and Sharpe. Several runs with similar point error produce materially different turnover and drawdown, showing why portfolio-aware evaluation is required.
 
-\textbf{4) Family-level averages favor XGBoost variants.}
-Under daily rebalancing, mean annualized Sharpe is 0.586 for XGBoost, 0.532 for LSTM, and 0.506 for GNNs. Under weekly rebalancing, means increase to 0.772 (XGBoost), 0.714 (LSTM), and 0.643 (GNN). GNNs remain competitive but are not dominant on average in this tuned set.
+\textbf{4) Family-level averages do not imply universal model dominance.}
+XGBoost-family variants lead on mean Sharpe in this window, while GNNs remain competitive in selected edge settings. This supports a conditional conclusion: representation choice matters, but deployment utility depends on the full stack (edge design, rebalance policy, and costs).
 
-\textbf{5) Edge ablation favors sector edges in this benchmark.}
-For GNN-only aggregation, sector edges provide the best mean Sharpe in both policies (0.541 daily, 0.681 weekly). Combined edges (\texttt{corr+sector+granger}) do not outperform simpler alternatives on average.
+\textbf{5) Edge ablation favors simpler sector priors over merged complexity on average.}
+Sector-edge variants are strongest on mean GNN Sharpe in this tuned matrix. The combined \texttt{corr+sector+granger} graph does not dominate average outcomes, indicating that adding channels can introduce noise or instability.
 
-\section{Research-Question Answers}
-\textbf{RQ1: Do graph-based models improve predictive quality?}
-Partially. End-to-end GNNs do not dominate all metrics, but graph-aware information clearly helps in the best-performing graph-feature model.
+\section{Buy-and-Hold Gap and Alpha Claims}
+A critical result is that all tested model-driven strategies remain below test-window buy-and-hold final wealth in this period. Therefore, this thesis does \emph{not} make a broad alpha-superiority claim. The supported claim is narrower: under one controlled protocol, some graph-aware variants improve risk-adjusted portfolio diagnostics relative to other learned models, but they do not beat passive benchmark wealth in this regime.
 
-\textbf{RQ2: Which edge signals are most useful?}
-Sector edges are strongest on average in this tuned matrix; pure correlation edges are weaker on Sharpe despite competitive IC in selected runs.
+\section{Research-Question Mapping}
+\textbf{RQ1 (graph-based predictive quality):} partially supported. Graph-aware information helps, especially in graph-feature hybrids, but end-to-end GNNs are not uniformly dominant.
 
-\textbf{RQ3: Do predictive gains monetize in portfolio space?}
-Yes, but only partially. Risk-adjusted improvements exist across models and policies, yet absolute wealth remains below the buy-and-hold benchmark in the 2020--2024 sample.
+\textbf{RQ2 (useful edge signals):} sector edges are the most robust average GNN choice in this matrix.
+
+\textbf{RQ3 (monetization of prediction gains):} partially supported. Improvements in ranking and Sharpe exist within model families, but absolute wealth remains below buy-and-hold in the 2020--2024 window.
+
+\textbf{RQ4 (rebalance sensitivity):} strongly supported. Weekly rebalancing materially improves deployable quality by reducing turnover and often improving Sharpe.

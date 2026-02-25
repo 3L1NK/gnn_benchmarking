@@ -154,9 +154,33 @@ def _normalize_backtest_policies(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return cfg
 
 
+def _normalize_granger_aliases(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    graph_cfg = cfg.setdefault("graph", {})
+    gr_cfg = cfg.setdefault("granger", {})
+
+    # Graph-level aliases used in historical run configs.
+    if "granger_topk" in graph_cfg and "granger_top_k" not in graph_cfg:
+        graph_cfg["granger_top_k"] = int(graph_cfg.get("granger_topk", 5))
+    if "granger_top_k" in graph_cfg:
+        graph_cfg["granger_top_k"] = int(graph_cfg.get("granger_top_k", 5))
+
+    # Legacy graph fields for Granger test configuration -> canonical granger.*.
+    if "granger_maxlag" in graph_cfg and "max_lag" not in gr_cfg:
+        gr_cfg["max_lag"] = int(graph_cfg.get("granger_maxlag", 2))
+    if "granger_alpha" in graph_cfg and "p_threshold" not in gr_cfg:
+        gr_cfg["p_threshold"] = float(graph_cfg.get("granger_alpha", 0.05))
+
+    if "max_lag" in gr_cfg:
+        gr_cfg["max_lag"] = int(gr_cfg.get("max_lag", 2))
+    if "p_threshold" in gr_cfg:
+        gr_cfg["p_threshold"] = float(gr_cfg.get("p_threshold", 0.05))
+    return cfg
+
+
 def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     cfg = deepcopy(cfg or {})
     cfg = _translate_legacy_graph_edges(cfg)
+    cfg = _normalize_granger_aliases(cfg)
 
     data_cfg = cfg.setdefault("data", {})
     data_cfg.setdefault("target_horizon", 1)

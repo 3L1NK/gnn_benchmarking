@@ -1,7 +1,7 @@
 This chapter builds the theoretical foundation needed to interpret the benchmark design and the empirical results.
 
 \section{Forecasting Equities as a Weak-Signal Ranking Problem}
-Short-horizon equity forecasting is fundamentally a low signal-to-noise problem. Under efficient-market arguments, predictable structure in liquid markets should be limited, unstable, and quickly arbitraged \citep{fama1970efficient}. In practice, this means that improvements in point-error metrics can be small, and many apparent gains vanish when tested out-of-sample \citep{local_benchmarking_ml_stock_prediction}.
+Short-horizon equity forecasting is fundamentally a low signal-to-noise problem. Under efficient-market arguments, predictable structure in liquid markets should be limited, unstable, and quickly arbitraged \citep{fama1970efficient}. In practice, this means that improvements in point-error metrics can be small, and many apparent gains vanish when tested out-of-sample unless evaluation is strictly out-of-time and portfolio-aware.
 
 Let $r_{i,t+1}$ be the next-period return for asset $i$, and let $\hat{r}_{i,t+1}$ be a model forecast. In a portfolio context, the objective is typically not exact level prediction but cross-sectional ordering:
 \[
@@ -35,7 +35,7 @@ Because financial regimes shift, controlling overfitting is central. Standard co
 These controls do not guarantee robustness, but they reduce the chance that apparent in-sample fit is purely noise.
 
 \section{Sequence Modeling for Financial Time Series}
-Recurrent models represent temporal dependence by maintaining hidden state across time. Long Short-Term Memory (LSTM) networks introduce gating mechanisms (input, forget, output gates) to mitigate vanishing gradients and preserve long-range dependencies \citep{hochreiter1997lstm}. For return forecasting, LSTMs are often used as sequence baselines because they can learn lag structures that fixed-window linear models may miss \citep{local_lstm_stock_forecast,local_regression_forecasting_stock_lstm,local_prediction_lstm_stock}.
+Recurrent models represent temporal dependence by maintaining hidden state across time. Long Short-Term Memory (LSTM) networks introduce gating mechanisms (input, forget, output gates) to mitigate vanishing gradients and preserve long-range dependencies \citep{hochreiter1997lstm}. For return forecasting, LSTMs are often used as sequence baselines because they can learn lag structures that fixed-window linear models may miss.
 
 However, pure sequence models process each asset stream independently unless additional relational features are injected. This limits their ability to represent contemporaneous cross-asset propagation effects (for example sector shocks diffusing through highly connected equities).
 
@@ -81,9 +81,7 @@ Given a trading rule and transaction costs, forecasts produce realized equity cu
 This dual view is central: a model with higher IC may still underperform after costs if turnover is excessive or tail losses dominate.
 
 \section{Related Literature in Graph-Based Financial Forecasting}
-Recent studies explore temporal-relational ranking, hierarchical attention, dynamic graph updates, hybrid sequence-graph architectures, and graph-augmented portfolio construction \citep{local_temporal_relational_ranking_stock_prediction,local_hats_hierarchical_graph_attention_stock,local_dynamic_gnn_enhanced_volatility_prediction,local_dynamic_portfolio_rebalance_hybrid_gnn,local_spatial_temporal_gnn_stock_prediction,local_graph_augmented_hybrid_portfolio_risk_management,local_graph_neural_networks_asset_management,local_graph_neural_networks_portfolio_optimization}.
-
-Survey work similarly reports promising but non-uniform evidence: gains depend heavily on universe definition, edge construction, validation protocol, and cost assumptions \citep{local_review_gnn_finance_methods,local_gnn_review_methods_applications,local_gnn_financial_forecasting_literature_review}. This motivates benchmark designs that emphasize protocol consistency and reproducible artifact generation.
+Recent work spans temporal-relational ranking, attention-based message passing, dynamic graph updates, and hybrid sequence-graph architectures. The consistent theme is that reported gains are sensitive to universe definition, edge-construction choices, and validation protocol. This motivates benchmark designs that emphasize protocol consistency, reproducible artifact generation, and explicit portfolio-level evaluation.
 
 \section{Positioning of This Thesis}
 Most prior papers differ simultaneously in datasets, time windows, objective functions, and execution assumptions, which makes direct performance claims hard to compare. This thesis positions itself as a controlled benchmark study:
@@ -94,4 +92,4 @@ Most prior papers differ simultaneously in datasets, time windows, objective fun
   \item two rebalance policies for implementation sensitivity,
   \item and explicit edge-type ablation for interpretability.
 \end{itemize}
-This framing does not claim universal superiority of one architecture class; instead, it aims to isolate when and where relational modeling adds measurable value \citep{local_benchmarking_gnns,local_exploring_gnn_stock_rolling_windows,local_stock_forecast_nn_graphs}.
+This framing does not claim universal superiority of one architecture class; instead, it aims to isolate when and where relational modeling adds measurable value under one controlled protocol.

@@ -203,6 +203,16 @@ def main() -> None:
 
     code = run_matrix(generated, rebuild_cache=args.rebuild_cache)
     if code == 0 and args.with_report:
+        dedup_cmd = [
+            sys.executable,
+            "scripts/deduplicate_results_ledger.py",
+            "--results",
+            "results/results_tuned_all.jsonl",
+        ]
+        print(f"[tuned-all] running {' '.join(dedup_cmd)}")
+        proc = subprocess.run(dedup_cmd, cwd=REPO_ROOT)
+        code = proc.returncode
+    if code == 0 and args.with_report:
         report_cmd = [
             sys.executable,
             "scripts/generate_thesis_report.py",
@@ -210,6 +220,8 @@ def main() -> None:
             "results/results_tuned_all.jsonl",
             "--out",
             args.report_out,
+            "--expected-runs",
+            "26",
         ]
         print(f"[tuned-all] running {' '.join(report_cmd)}")
         proc = subprocess.run(report_cmd, cwd=REPO_ROOT)
@@ -219,4 +231,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

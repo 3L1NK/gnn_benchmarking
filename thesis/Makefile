@@ -5,10 +5,11 @@ MAIN ?= main.tex
 
 TABLE_SCRIPT := $(ROOT)/thesis/scripts/export_tables.py
 REPORT_SCRIPT := $(ROOT)/scripts/generate_thesis_report.py
-RESULTS_PATH := $(ROOT)/results/results.jsonl
-REPORT_OUT := $(ROOT)/results/reports/thesis
+DEDUP_SCRIPT := $(ROOT)/scripts/deduplicate_results_ledger.py
+RESULTS_PATH := $(ROOT)/results/results_tuned_all.jsonl
+REPORT_OUT := $(ROOT)/results/reports/thesis_tuned_all
 
-.PHONY: all pdf watch clean tables report
+.PHONY: all pdf watch clean tables report full
 
 all: pdf
 
@@ -23,7 +24,13 @@ clean:
 	rm -f *.bbl *.blg *.run.xml *.bcf
 
 tables:
-	$(PYTHON) $(TABLE_SCRIPT)
+	THESIS_REPORT_DIR=$(REPORT_OUT) $(PYTHON) $(TABLE_SCRIPT)
 
 report:
-	$(PYTHON) $(REPORT_SCRIPT) --results $(RESULTS_PATH) --out $(REPORT_OUT)
+	$(PYTHON) $(REPORT_SCRIPT) --results $(RESULTS_PATH) --out $(REPORT_OUT) --expected-runs 26
+
+full:
+	$(PYTHON) $(DEDUP_SCRIPT) --results $(RESULTS_PATH)
+	$(PYTHON) $(REPORT_SCRIPT) --results $(RESULTS_PATH) --out $(REPORT_OUT) --expected-runs 26
+	THESIS_REPORT_DIR=$(REPORT_OUT) $(PYTHON) $(TABLE_SCRIPT)
+	$(LATEXMK) -pdf -interaction=nonstopmode -halt-on-error $(MAIN)

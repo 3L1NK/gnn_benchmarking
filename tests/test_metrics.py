@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from utils.metrics import annualized_return, annualized_volatility, max_drawdown, portfolio_metrics
 
@@ -37,3 +38,17 @@ def test_sharpe_annualized_matches_daily_scaling():
     r = [0.02, -0.00980392156862745, 0.019801980198019802]
     stats = portfolio_metrics(eq, r, risk_free_rate=0.0, periods_per_year=252)
     assert np.isclose(stats["sharpe_annualized"], stats["sharpe"] * np.sqrt(252.0))
+
+
+def test_portfolio_metrics_fails_on_constant_returns():
+    eq = [1.0, 1.01, 1.02]
+    r = [0.01, 0.01, 0.01]
+    with pytest.raises(ValueError):
+        portfolio_metrics(eq, r, risk_free_rate=0.0)
+
+
+def test_portfolio_metrics_fails_on_length_misalignment():
+    eq = [1.0, 1.01, 1.02]
+    r = [0.01]
+    with pytest.raises(ValueError):
+        portfolio_metrics(eq, r, risk_free_rate=0.0)

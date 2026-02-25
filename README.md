@@ -32,10 +32,10 @@ pip install -r requirements.txt
 python train.py --config configs/runs/core/gcn_corr_only.yaml
 ```
 
-To run the core thesis matrix:
+To run the tuned-all thesis matrix:
 
 ```bash
-python scripts/run_core_thesis_matrix.py --fresh-results --with-report
+python scripts/run_all_models_tuned_matrix.py --fresh-results --with-report --budget medium
 ```
 
 ## Config Layout
@@ -79,19 +79,27 @@ policy and cached from price data as well.
 
 ## One-Command Thesis Report
 
-After running experiments:
+Canonical tuned-all report generation:
 
 ```bash
-python scripts/generate_thesis_report.py --results results/results.jsonl --out results/reports/thesis
+python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 26
 ```
 
-This generates:
+This generates canonical artifacts:
 - `master_comparison.csv`
+- `master_comparison_raw.csv`
+- `run_matrix.csv`
 - `family_summary.csv`
 - `edge_ablation_summary.csv`
 - `equity_curves_key_models.png`
 - `ic_distribution_boxplot_reb1.png`, `ic_distribution_boxplot_reb5.png`
-- thesis plots under `results/reports/thesis/`
+- thesis plots under `results/reports/thesis_tuned_all/`
+
+One-command rebuild (dedup ledger + report + LaTeX tables + optional PDF):
+
+```bash
+python scripts/build_thesis_report.py --build-pdf
+```
 
 ## Write Thesis in LaTeX (In-Repo)
 
@@ -106,4 +114,4 @@ cd thesis
 make pdf
 ```
 
-This will regenerate LaTeX tables from `results/reports/thesis/*.csv` and compile `thesis/main.tex`.
+This will regenerate LaTeX tables from `results/reports/thesis_tuned_all/*.csv` and compile `thesis/main.tex`.

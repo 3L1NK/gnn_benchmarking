@@ -10,14 +10,14 @@
 \toprule
 Model & Family & Rank IC & Sharpe & Max DD & Final \\
 \midrule
-XGB & XGB & 0.0088 & 0.6936 & -0.3312 & 1.8334 \\
-XGB & XGB & 0.0088 & NaN & -0.3312 & 1.8334 \\
-LSTM & LSTM & 0.0023 & NaN & -0.3584 & 1.9114 \\
-XGB+Node2Vec (n2v-corr) & XGB & 0.0136 & NaN & -0.3192 & 1.9483 \\
-GCN (corr) & GNN & 0.0042 & NaN & -0.3229 & 1.9211 \\
-GCN (sector) & GNN & 0.0153 & NaN & -0.3539 & 1.9349 \\
-GCN (granger) & GNN & 0.0165 & NaN & -0.3187 & 1.9867 \\
-GCN (corr+sec+gr) & GNN & 0.0093 & NaN & -0.3346 & 1.6598 \\
+XGB+Node2Vec (n2v-corr) & XGB & 0.0160 & 0.8058 & -0.3284 & 2.0112 \\
+XGB & XGB & 0.0043 & 0.7390 & -0.3117 & 1.8726 \\
+LSTM & LSTM & -0.0010 & 0.7143 & -0.3473 & 1.9008 \\
+GAT (corr+sec+gr) & GNN & -0.0077 & 0.7030 & -0.3089 & 1.8531 \\
+TGAT-static (corr) & GNN & 0.0037 & 0.6923 & -0.3455 & 1.9014 \\
+GCN (sector) & GNN & 0.0058 & 0.6916 & -0.3402 & 1.8620 \\
+GAT (sector) & GNN & 0.0035 & 0.6696 & -0.3184 & 1.8176 \\
+GAT (granger) & GNN & -0.0076 & 0.6550 & -0.3520 & 1.8077 \\
 \bottomrule
 \end{tabular}
 }

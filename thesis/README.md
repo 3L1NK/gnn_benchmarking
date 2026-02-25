@@ -1,7 +1,7 @@
 # Thesis LaTeX Workspace
 
 This directory is a LaTeX writing workspace that lives inside the benchmarking repo.
-It is prewired to use artifacts generated under `results/reports/thesis/`.
+It is prewired to use artifacts generated under `results/reports/thesis_tuned_all/`.
 
 ## Structure
 
@@ -19,7 +19,7 @@ It is prewired to use artifacts generated under `results/reports/thesis/`.
 1. Regenerate thesis report artifacts (from repo root):
 
 ```bash
-python scripts/generate_thesis_report.py --results results/results.jsonl --out results/reports/thesis
+python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 26
 ```
 
 2. Regenerate LaTeX tables:
@@ -28,11 +28,11 @@ python scripts/generate_thesis_report.py --results results/results.jsonl --out r
 python thesis/scripts/export_tables.py
 ```
 
-By default, table export reads from `results/reports/thesis_tuned_all/` if that folder exists; otherwise it falls back to `results/reports/thesis/`.  
+By default, table export reads from `results/reports/thesis_tuned_all/`.  
 Override explicitly when needed:
 
 ```bash
-THESIS_REPORT_DIR=results/reports/thesis python thesis/scripts/export_tables.py
+THESIS_REPORT_DIR=results/reports/thesis_tuned_all python thesis/scripts/export_tables.py
 ```
 
 3. Build PDF (from `thesis/`):
@@ -48,7 +48,8 @@ From `thesis/`:
 - `make pdf`: export tables, then compile once
 - `make watch`: export tables, then watch-and-rebuild
 - `make clean`: remove LaTeX build artifacts
-- `make report`: refresh `results/reports/thesis/*` from `results/results.jsonl`
+- `make report`: refresh `results/reports/thesis_tuned_all/*` from `results/results_tuned_all.jsonl`
+- `make full`: dedup tuned ledger, regenerate report + tables, compile PDF
 
 If your Python environment is not default `python3`, override:
 

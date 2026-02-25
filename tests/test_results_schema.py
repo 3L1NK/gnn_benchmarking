@@ -123,5 +123,5 @@ def test_build_experiment_result_backward_compatible_without_new_ratio_fields():
     )
     assert result["portfolio_sharpe"] == legacy_stats["sharpe"]
     assert result["portfolio_sharpe_daily"] == legacy_stats["sharpe"]
-    assert pd.isna(result["portfolio_sharpe_annualized"])
+    assert np.isclose(result["portfolio_sharpe_annualized"], legacy_stats["sharpe"] * np.sqrt(252.0))
     assert pd.isna(result["portfolio_sortino_annualized"])
