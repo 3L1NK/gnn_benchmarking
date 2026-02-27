@@ -1,0 +1,3 @@
+rebalance_freq,source_run_tag,eqw_path,start_date,end_date,n_points,final_value,status,detail,rebalance_dates_count,turnover_mean,turnover_median,turnover_max,first_curve_diff_date_reb1_vs_reb5,first_weights_diff_date_reb1_vs_reb5
+1,mlp_tuned_all,experiments_tuned_all/mlp/equal_weight_equity_curve_reb1.csv,2020-01-02,2024-12-27,1256,1.9868601593707904,ok,,1256,0.011461610583265669,0.009690254277303963,1.0,2020-01-06,2020-01-06
+5,xgb_node2vec_corr_tuned_all,experiments_tuned_all/xgb_node2vec_corr/equal_weight_equity_curve_reb5.csv,2020-01-02,2024-12-27,1256,1.9695125920214247,ok,,252,0.005677038048686297,0.0,1.0,2020-01-06,2020-01-06

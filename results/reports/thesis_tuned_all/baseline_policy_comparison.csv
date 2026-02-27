@@ -1,0 +1,5 @@
+strategy_name,strategy_kind,rebalance_freq,rebalance_label,portfolio_sharpe_annualized,portfolio_annualized_return,portfolio_max_drawdown,portfolio_final_value,test_start_date,test_end_date,source_run_tag
+Buy and hold (fixed shares),baseline_buy_and_hold,1,reb=1,1.2272780893102677,0.3842240191009789,-0.3471179958366627,5.049288556044275,2020-01-02,2024-12-27,mlp_tuned_all
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,1,reb=1,0.7667087720637379,0.1518790337272664,-0.3464553449053246,2.0221621477103713,2020-01-02,2024-12-27,mlp_tuned_all
+Buy and hold (fixed shares),baseline_buy_and_hold,5,reb=5,1.2272774449271957,0.3842240191009789,-0.3471179958366627,5.049288556044275,2020-01-02,2024-12-27,xgb_node2vec_corr_tuned_all
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,5,reb=5,0.7667082048575795,0.1518790337272664,-0.3464553449053246,2.0221621477103713,2020-01-02,2024-12-27,xgb_node2vec_corr_tuned_all

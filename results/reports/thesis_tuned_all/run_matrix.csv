@@ -10,6 +10,8 @@ e2ff1167dddc,gat_sector_only_tuned_all,gnn,gat,sector,42,regression,1,1,e677b2c8
 d1fbb8e24eb9,tgat_static_corr_only_tuned_all,gnn,tgat_static,corr,42,regression,1,1,e677b2c83d8f,legacy_config,included
 bc3875a10e37,tgcn_static_corr_only_tuned_all,gnn,tgcn_static,corr,42,regression,1,1,e677b2c83d8f,legacy_config,included
 933109ce755b,lstm_tuned_all,lstm,lstm,none,42,regression,1,1,e677b2c83d8f,legacy_config,included
+9eb683c0b5de,mlp_tuned_all,mlp,mlp,none,42,regression,1,1,e677b2c83d8f,2f660908496d,included
+96768bf853ce,graphlasso_linear_tuned_all,xgboost,graphlasso_linear,graphlasso,42,regression,1,1,e677b2c83d8f,113d64fe54b5,included
 75fe00a1eac3,xgb_node2vec_corr_tuned_all,xgboost,xgb_node2vec,node2vec_correlation,42,regression,1,1,e677b2c83d8f,legacy_config,included
 67787a883a67,xgb_raw_tuned_all,xgboost,xgb_raw,none,42,regression,1,1,e677b2c83d8f,legacy_config,included
 9b3a8cc400ee,gat_corr_only_tuned_all,gnn,gat,corr,42,regression,1,5,e677b2c83d8f,legacy_config,included
@@ -23,5 +25,7 @@ edebeee77e61,gcn_granger_only_tuned_all,gnn,gcn,granger,42,regression,1,5,e677b2
 9bdee7f1b541,tgat_static_corr_only_tuned_all,gnn,tgat_static,corr,42,regression,1,5,e677b2c83d8f,legacy_config,included
 f07e6065a953,tgcn_static_corr_only_tuned_all,gnn,tgcn_static,corr,42,regression,1,5,e677b2c83d8f,legacy_config,included
 09310fc18c1d,lstm_tuned_all,lstm,lstm,none,42,regression,1,5,e677b2c83d8f,legacy_config,included
+d7b09cd9d2de,mlp_tuned_all,mlp,mlp,none,42,regression,1,5,e677b2c83d8f,2f660908496d,included
+a0689a22bcaa,graphlasso_linear_tuned_all,xgboost,graphlasso_linear,graphlasso,42,regression,1,5,e677b2c83d8f,113d64fe54b5,included
 64952c498bf0,xgb_node2vec_corr_tuned_all,xgboost,xgb_node2vec,node2vec_correlation,42,regression,1,5,e677b2c83d8f,legacy_config,included
 725b09e91479,xgb_raw_tuned_all,xgboost,xgb_raw,none,42,regression,1,5,e677b2c83d8f,legacy_config,included

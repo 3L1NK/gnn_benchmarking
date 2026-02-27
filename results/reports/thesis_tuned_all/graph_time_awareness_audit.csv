@@ -1,0 +1,31 @@
+run_tag,model_name,edge_type,graph_window,max_timestamp_used,split_train_end,max_prediction_date,audit_mode,status,detail
+mlp_tuned_all,mlp,none,,,2015-12-31,2024-12-27,n/a,pass,non-graph model
+xgb_node2vec_corr_tuned_all,xgb_node2vec,node2vec_correlation,2000-03-29..2015-12-31,2015-12-31,2015-12-31,2024-12-27,frozen_train,pass,window_end=2015-12-31 <= split_train_end=2015-12-31
+gcn_sector_only_tuned_all,gcn,sector,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gat_corr_only_tuned_all,gat,corr,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gcn_granger_only_tuned_all,gcn,granger,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gcn_corr_sector_granger_tuned_all,gcn,corr+sector+granger,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+lstm_tuned_all,lstm,none,,,2015-12-31,2024-12-27,n/a,pass,non-graph model
+xgb_raw_tuned_all,xgb_raw,none,,,2015-12-31,2024-12-27,n/a,pass,non-graph model
+tgat_static_corr_only_tuned_all,tgat_static,corr,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gat_granger_only_tuned_all,gat,granger,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gat_sector_only_tuned_all,gat,sector,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gat_corr_sector_granger_tuned_all,gat,corr+sector+granger,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gcn_corr_only_tuned_all,gcn,corr,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+tgcn_static_corr_only_tuned_all,tgcn_static,corr,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+graphlasso_linear_tuned_all,graphlasso_linear,graphlasso,2010-01-01..2020-01-01,2020-01-01,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2020-01-01 <= max_prediction_date=2024-12-27
+xgb_node2vec_corr_tuned_all,xgb_node2vec,node2vec_correlation,2000-03-29..2015-12-31,2015-12-31,2015-12-31,2024-12-27,frozen_train,pass,window_end=2015-12-31 <= split_train_end=2015-12-31
+mlp_tuned_all,mlp,none,,,2015-12-31,2024-12-27,n/a,pass,non-graph model
+xgb_raw_tuned_all,xgb_raw,none,,,2015-12-31,2024-12-27,n/a,pass,non-graph model
+lstm_tuned_all,lstm,none,,,2015-12-31,2024-12-27,n/a,pass,non-graph model
+gat_corr_sector_granger_tuned_all,gat,corr+sector+granger,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+tgat_static_corr_only_tuned_all,tgat_static,corr,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gcn_sector_only_tuned_all,gcn,sector,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gat_sector_only_tuned_all,gat,sector,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gat_granger_only_tuned_all,gat,granger,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gcn_corr_only_tuned_all,gcn,corr,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+tgcn_static_corr_only_tuned_all,tgcn_static,corr,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+graphlasso_linear_tuned_all,graphlasso_linear,graphlasso,2010-01-01..2020-01-01,2020-01-01,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2020-01-01 <= max_prediction_date=2024-12-27
+gcn_granger_only_tuned_all,gcn,granger,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gat_corr_only_tuned_all,gat,corr,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+gcn_corr_sector_granger_tuned_all,gcn,corr+sector+granger,2000-06-26..2024-12-27,2024-12-27,2015-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27

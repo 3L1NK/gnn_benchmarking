@@ -1,0 +1,3 @@
+audit_name,status,fail_rows,warning_rows,detail
+equal_weight_rebalance_integrity,pass,0,0,fail if reb=1 and reb=5 EQW series are identical
+graph_time_awareness,pass,0,0,fail if graph max timestamp exceeds policy bound
