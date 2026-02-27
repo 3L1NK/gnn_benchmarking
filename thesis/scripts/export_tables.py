@@ -64,6 +64,18 @@ def _load_csv(name: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _load_csv_optional(name: str) -> pd.DataFrame:
+    if not REPORT_DIR.exists():
+        return pd.DataFrame()
+    path = REPORT_DIR / name
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
 def _metric_col(df: pd.DataFrame) -> str:
     if "portfolio_sharpe_annualized" in df.columns:
         return "portfolio_sharpe_annualized"
@@ -142,6 +154,13 @@ def _run_tag_to_label(label: object) -> str:
     return tag.replace("_", "-")
 
 
+def _reb_to_label(value: object) -> str:
+    try:
+        return f"reb={int(pd.to_numeric(value, errors='coerce'))}"
+    except Exception:
+        return str(value)
+
+
 def _write_table(df: pd.DataFrame, out_name: str, caption: str, label: str) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     tabular = df.to_latex(index=False, escape=True, float_format="%.4f")
@@ -180,6 +199,15 @@ def _write_longtable(df: pd.DataFrame, out_name: str, caption: str, label: str) 
         f"{latex}\n"
         "\\endgroup\n",
         encoding="utf-8",
+    )
+
+
+def _write_no_data_table(out_name: str, caption: str, label: str) -> None:
+    _write_table(
+        pd.DataFrame({"Status": ["not_available"]}),
+        out_name=out_name,
+        caption=caption,
+        label=label,
     )
 
 
@@ -248,6 +276,8 @@ def _export_family_summary(family: pd.DataFrame) -> None:
         subset["Category"] = subset["Category"].map(_category_label)
     if "Model" in subset.columns:
         subset["Model"] = subset["Model"].map(_run_tag_to_label)
+    if "Rebalance" in subset.columns:
+        subset["Rebalance"] = subset["Rebalance"].map(_reb_to_label)
 
     _write_table(
         subset,
@@ -281,6 +311,8 @@ def _export_edge_ablation(edge: pd.DataFrame) -> None:
     )
     if "Edge" in subset.columns:
         subset["Edge"] = subset["Edge"].map(_edge_label)
+    if "Rebalance" in subset.columns:
+        subset["Rebalance"] = subset["Rebalance"].map(_reb_to_label)
 
     _write_table(
         subset,
@@ -329,6 +361,8 @@ def _export_run_matrix(run_matrix: pd.DataFrame) -> None:
         subset["Split ID"] = subset["Split ID"].map(_short_hash)
     if "Config Hash" in subset.columns:
         subset["Config Hash"] = subset["Config Hash"].map(_short_hash)
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
 
     _write_table(
         subset,
@@ -375,6 +409,8 @@ def _export_decision_ranking(decision: pd.DataFrame) -> None:
     )
     if "Run" in subset.columns:
         subset["Run"] = subset["Run"].map(_run_tag_to_label)
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
     _write_longtable(
         subset,
         out_name="decision_ranking_full.tex",
@@ -424,6 +460,8 @@ def _export_master_comparison(master: pd.DataFrame) -> None:
         subset["Family"] = subset["Family"].map(_family_label)
     if "Edge" in subset.columns:
         subset["Edge"] = subset["Edge"].map(_edge_label)
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
 
     for freq in (1, 5):
         freq_df = subset[subset["Reb"] == freq].copy()
@@ -494,11 +532,394 @@ def _export_baseline_context(baseline: pd.DataFrame) -> None:
             "test_final_value": "Test Final",
         }
     )
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
     _write_table(
         subset,
         out_name="baseline_context.tex",
         caption="Buy-and-hold baseline context used for report-relative interpretation.",
         label="tab:baseline-context",
+    )
+
+
+def _export_baseline_policy_comparison(baseline_policy: pd.DataFrame) -> None:
+    if baseline_policy.empty:
+        return
+    keep = [
+        "strategy_name",
+        "rebalance_freq",
+        "portfolio_sharpe_annualized",
+        "portfolio_annualized_return",
+        "portfolio_max_drawdown",
+        "portfolio_final_value",
+        "test_start_date",
+        "test_end_date",
+    ]
+    keep = [c for c in keep if c in baseline_policy.columns]
+    if not keep:
+        return
+    subset = baseline_policy[keep].copy()
+    subset = subset.rename(
+        columns={
+            "strategy_name": "Strategy",
+            "rebalance_freq": "Reb",
+            "portfolio_sharpe_annualized": "Sharpe",
+            "portfolio_annualized_return": "Ann Return",
+            "portfolio_max_drawdown": "Max DD",
+            "portfolio_final_value": "Final",
+            "test_start_date": "Test Start",
+            "test_end_date": "Test End",
+        }
+    )
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
+    _write_table(
+        subset,
+        out_name="baseline_policy_comparison.tex",
+        caption="Baseline benchmark metrics in the test window (Buy and hold fixed shares, Equal weight rebalanced all assets).",
+        label="tab:baseline-policy-comparison",
+    )
+
+
+def _export_model_vs_baseline(master: pd.DataFrame, baseline_policy: pd.DataFrame) -> None:
+    if master.empty or baseline_policy.empty:
+        return
+    sharpe_col = _metric_col(master)
+    freqs = sorted(pd.to_numeric(master.get("rebalance_freq"), errors="coerce").dropna().astype(int).unique().tolist())
+    for freq in freqs:
+        model_subset = master[pd.to_numeric(master.get("rebalance_freq"), errors="coerce") == int(freq)].copy()
+        if model_subset.empty:
+            continue
+        model_subset = model_subset.sort_values(sharpe_col, ascending=False).head(8)
+        model_rows = pd.DataFrame(
+            {
+                "Strategy": model_subset.get("run_tag", pd.Series(dtype=object)).map(_run_tag_to_label),
+                "Type": "Model",
+                "Reb": int(freq),
+                "Sharpe": model_subset.get(sharpe_col, pd.NA),
+                "Ann Return": model_subset.get("portfolio_annualized_return", pd.NA),
+                "Max DD": model_subset.get("portfolio_max_drawdown", pd.NA),
+                "Final": model_subset.get("portfolio_final_value", pd.NA),
+            }
+        )
+        baseline_subset = baseline_policy[
+            pd.to_numeric(baseline_policy.get("rebalance_freq"), errors="coerce") == int(freq)
+        ].copy()
+        baseline_rows = pd.DataFrame(
+            {
+                "Strategy": baseline_subset.get("strategy_name", pd.Series(dtype=object)),
+                "Type": "Baseline",
+                "Reb": int(freq),
+                "Sharpe": baseline_subset.get("portfolio_sharpe_annualized", pd.NA),
+                "Ann Return": baseline_subset.get("portfolio_annualized_return", pd.NA),
+                "Max DD": baseline_subset.get("portfolio_max_drawdown", pd.NA),
+                "Final": baseline_subset.get("portfolio_final_value", pd.NA),
+            }
+        )
+        table = pd.concat([model_rows, baseline_rows], ignore_index=True)
+        if "Reb" in table.columns:
+            table["Reb"] = table["Reb"].map(_reb_to_label)
+        _write_table(
+            table,
+            out_name=f"model_vs_baseline_reb{int(freq)}.tex",
+            caption=f"Top model runs and baseline benchmarks in one view (rebalance\\_freq={int(freq)}).",
+            label=f"tab:model-vs-baseline-reb{int(freq)}",
+        )
+
+
+def _export_alpha_vs_equal_weight(alpha_df: pd.DataFrame) -> None:
+    if alpha_df.empty:
+        _write_no_data_table(
+            out_name="alpha_vs_equal_weight.tex",
+            caption="Active-vs-equal-weight diagnostics (arithmetic active returns, annualized with 252 trading days).",
+            label="tab:alpha-vs-equal-weight",
+        )
+        return
+    subset = alpha_df.copy()
+    keep = [
+        "run_tag",
+        "rebalance_freq",
+        "active_return_annualized",
+        "tracking_error_annualized",
+        "information_ratio_annualized",
+        "relative_final_value",
+        "relative_max_drawdown",
+    ]
+    keep = [c for c in keep if c in subset.columns]
+    subset = subset[keep].copy()
+    subset = subset.sort_values(
+        ["rebalance_freq", "information_ratio_annualized", "active_return_annualized"],
+        ascending=[True, False, False],
+    )
+    subset = subset.groupby("rebalance_freq", as_index=False).head(8)
+    subset = subset.rename(
+        columns={
+            "run_tag": "Run",
+            "rebalance_freq": "Reb",
+            "active_return_annualized": "Active Return",
+            "tracking_error_annualized": "Tracking Error",
+            "information_ratio_annualized": "IR",
+            "relative_final_value": "Rel Final",
+            "relative_max_drawdown": "Rel Max DD",
+        }
+    )
+    if "Run" in subset.columns:
+        subset["Run"] = subset["Run"].map(_run_tag_to_label)
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
+    _write_table(
+        subset,
+        out_name="alpha_vs_equal_weight.tex",
+        caption="Active-vs-equal-weight diagnostics (arithmetic active returns, annualized with 252 trading days).",
+        label="tab:alpha-vs-equal-weight",
+    )
+
+
+def _export_long_short_top3_bottom3(long_short: pd.DataFrame) -> None:
+    if long_short.empty:
+        _write_no_data_table(
+            out_name="long_short_top3_bottom3.tex",
+            caption="Market-neutral long-short results (top 3 long, bottom 3 short; gross, cost bps = 0).",
+            label="tab:long-short-top3-bottom3",
+        )
+        return
+    subset = long_short.copy()
+    keep = [
+        "run_tag",
+        "rebalance_freq",
+        "portfolio_sharpe_annualized",
+        "portfolio_annualized_return",
+        "portfolio_max_drawdown",
+        "portfolio_final_value",
+        "portfolio_turnover",
+        "long_k",
+        "short_k",
+        "long_leg_gross",
+        "short_leg_gross",
+    ]
+    keep = [c for c in keep if c in subset.columns]
+    subset = subset[keep].copy()
+    subset = subset.sort_values(["rebalance_freq", "portfolio_sharpe_annualized"], ascending=[True, False]).head(12)
+    subset = subset.rename(
+        columns={
+            "run_tag": "Run",
+            "rebalance_freq": "Reb",
+            "portfolio_sharpe_annualized": "Sharpe",
+            "portfolio_annualized_return": "Ann Return",
+            "portfolio_max_drawdown": "Max DD",
+            "portfolio_final_value": "Final",
+            "portfolio_turnover": "Turnover",
+            "long_k": "Long K",
+            "short_k": "Short K",
+            "long_leg_gross": "Long Sum",
+            "short_leg_gross": "Short Sum",
+        }
+    )
+    if "Run" in subset.columns:
+        subset["Run"] = subset["Run"].map(_run_tag_to_label)
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
+    _write_table(
+        subset,
+        out_name="long_short_top3_bottom3.tex",
+        caption="Market-neutral long-short results (top 3 long, bottom 3 short; gross, cost bps = 0).",
+        label="tab:long-short-top3-bottom3",
+    )
+
+
+def _export_cost_sensitivity_summary(cost_summary: pd.DataFrame) -> None:
+    if cost_summary.empty:
+        _write_no_data_table(
+            out_name="cost_sensitivity_summary.tex",
+            caption="Cost sensitivity summary for long-only and long-short strategies (0/5/10 bps).",
+            label="tab:cost-sensitivity-summary",
+        )
+        return
+    subset = cost_summary.copy()
+    keep = ["strategy", "cost_bps", "cost_label", "sharpe_mean", "ann_return_mean", "max_dd_mean", "turnover_mean", "n_runs"]
+    keep = [c for c in keep if c in subset.columns]
+    subset = subset[keep].copy()
+    subset = subset.rename(
+        columns={
+            "strategy": "Strategy",
+            "cost_bps": "Cost (bps)",
+            "cost_label": "Label",
+            "sharpe_mean": "Mean Sharpe",
+            "ann_return_mean": "Mean Ann Return",
+            "max_dd_mean": "Mean Max DD",
+            "turnover_mean": "Mean Turnover",
+            "n_runs": "N",
+        }
+    )
+    _write_table(
+        subset,
+        out_name="cost_sensitivity_summary.tex",
+        caption="Cost sensitivity summary for long-only and long-short strategies (0/5/10 bps).",
+        label="tab:cost-sensitivity-summary",
+    )
+
+
+def _export_audit_status(audit_status: pd.DataFrame) -> None:
+    if audit_status.empty:
+        _write_no_data_table(
+            out_name="audit_status.tex",
+            caption="Fail-fast audit status for equal-weight rebalance integrity and graph time-awareness.",
+            label="tab:audit-status",
+        )
+        return
+    subset = audit_status.copy()
+    keep = ["audit_name", "status", "fail_rows", "warning_rows", "detail"]
+    keep = [c for c in keep if c in subset.columns]
+    subset = subset[keep].copy()
+    subset = subset.rename(
+        columns={
+            "audit_name": "Audit",
+            "status": "Status",
+            "fail_rows": "Fails",
+            "warning_rows": "Warnings",
+            "detail": "Detail",
+        }
+    )
+    _write_table(
+        subset,
+        out_name="audit_status.tex",
+        caption="Fail-fast audit status for equal-weight rebalance integrity and graph time-awareness.",
+        label="tab:audit-status",
+    )
+
+
+def _export_monthly_rebalance_subset(monthly: pd.DataFrame) -> None:
+    if monthly.empty:
+        _write_no_data_table(
+            out_name="monthly_rebalance_subset.tex",
+            caption="Subset comparison for monthly rebalancing extension (rebalance\\_freq=21) with gross costs.",
+            label="tab:monthly-rebalance-subset",
+        )
+        return
+    subset = monthly.copy()
+    keep = [
+        "strategy_name",
+        "strategy_kind",
+        "rebalance_freq",
+        "cost_label",
+        "portfolio_sharpe_annualized",
+        "portfolio_annualized_return",
+        "portfolio_max_drawdown",
+        "portfolio_final_value",
+        "portfolio_turnover",
+    ]
+    keep = [c for c in keep if c in subset.columns]
+    subset = subset[keep].copy()
+    subset = subset.rename(
+        columns={
+            "strategy_name": "Strategy",
+            "strategy_kind": "Kind",
+            "rebalance_freq": "Reb",
+            "cost_label": "Cost",
+            "portfolio_sharpe_annualized": "Sharpe",
+            "portfolio_annualized_return": "Ann Return",
+            "portfolio_max_drawdown": "Max DD",
+            "portfolio_final_value": "Final",
+            "portfolio_turnover": "Turnover",
+        }
+    )
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
+    _write_table(
+        subset,
+        out_name="monthly_rebalance_subset.tex",
+        caption="Subset comparison for monthly rebalancing extension (rebalance\\_freq=21) with gross costs.",
+        label="tab:monthly-rebalance-subset",
+    )
+
+
+def _export_lookback_sensitivity_subset(lookback: pd.DataFrame) -> None:
+    if lookback.empty:
+        _write_no_data_table(
+            out_name="lookback_sensitivity_subset.tex",
+            caption="Lookback sensitivity subset (14/30/60); missing entries require retraining.",
+            label="tab:lookback-sensitivity-subset",
+        )
+        return
+    subset = lookback.copy()
+    keep = [
+        "run_tag",
+        "rebalance_freq",
+        "lookback_window",
+        "status",
+        "portfolio_sharpe_annualized",
+        "portfolio_annualized_return",
+        "portfolio_max_drawdown",
+        "portfolio_final_value",
+    ]
+    keep = [c for c in keep if c in subset.columns]
+    subset = subset[keep].copy()
+    subset = subset.rename(
+        columns={
+            "run_tag": "Run",
+            "rebalance_freq": "Reb",
+            "lookback_window": "Lookback",
+            "status": "Status",
+            "portfolio_sharpe_annualized": "Sharpe",
+            "portfolio_annualized_return": "Ann Return",
+            "portfolio_max_drawdown": "Max DD",
+            "portfolio_final_value": "Final",
+        }
+    )
+    if "Run" in subset.columns:
+        subset["Run"] = subset["Run"].map(_run_tag_to_label)
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
+    _write_table(
+        subset,
+        out_name="lookback_sensitivity_subset.tex",
+        caption="Lookback sensitivity subset (14/30/60); missing entries require retraining.",
+        label="tab:lookback-sensitivity-subset",
+    )
+
+
+def _export_professor_main_results_table(df: pd.DataFrame) -> None:
+    if df.empty:
+        _write_no_data_table(
+            out_name="professor_main_results_table.tex",
+            caption="Professor-facing main table with baselines and best learned models.",
+            label="tab:professor-main-results",
+        )
+        return
+    subset = df.copy()
+    keep = [
+        "strategy_name",
+        "strategy_label",
+        "type",
+        "rebalance_label",
+        "final_value",
+        "annual_return",
+        "annual_vol",
+        "sharpe_annualized",
+        "max_drawdown",
+        "turnover",
+    ]
+    keep = [c for c in keep if c in subset.columns]
+    subset = subset[keep].copy()
+    subset = subset.rename(
+        columns={
+            "strategy_name": "Strategy",
+            "strategy_label": "Policy",
+            "type": "Type",
+            "rebalance_label": "Rebalance",
+            "final_value": "Final",
+            "annual_return": "Ann Return",
+            "annual_vol": "Ann Vol",
+            "sharpe_annualized": "Sharpe",
+            "max_drawdown": "Max DD",
+            "turnover": "Turnover",
+        }
+    )
+    _write_table(
+        subset,
+        out_name="professor_main_results_table.tex",
+        caption="Professor-facing main table with Buy and hold, Equal weight, and best learned models.",
+        label="tab:professor-main-results",
     )
 
 
@@ -509,6 +930,14 @@ def main() -> None:
     run_matrix = _load_csv("run_matrix.csv")
     decision = _load_csv("decision_ranking.csv")
     baseline = _load_csv("baseline_context.csv")
+    baseline_policy = _load_csv_optional("baseline_policy_comparison.csv")
+    alpha_vs_eqw = _load_csv_optional("alpha_vs_equal_weight.csv")
+    long_short = _load_csv_optional("long_short_top3_bottom3.csv")
+    cost_summary = _load_csv_optional("cost_sensitivity_summary.csv")
+    audit_status = _load_csv_optional("audit_status.csv")
+    monthly_subset = _load_csv_optional("monthly_rebalance_subset.csv")
+    lookback_subset = _load_csv_optional("lookback_sensitivity_subset.csv")
+    professor_main = _load_csv_optional("professor_main_results_table.csv")
 
     _export_top_models(master)
     _export_family_summary(family)
@@ -518,6 +947,15 @@ def main() -> None:
     _export_master_comparison(master)
     _export_runtime_summary(master)
     _export_baseline_context(baseline)
+    _export_baseline_policy_comparison(baseline_policy)
+    _export_model_vs_baseline(master, baseline_policy)
+    _export_alpha_vs_equal_weight(alpha_vs_eqw)
+    _export_long_short_top3_bottom3(long_short)
+    _export_cost_sensitivity_summary(cost_summary)
+    _export_audit_status(audit_status)
+    _export_monthly_rebalance_subset(monthly_subset)
+    _export_lookback_sensitivity_subset(lookback_subset)
+    _export_professor_main_results_table(professor_main)
 
     print(f"Using report directory: {REPORT_DIR}")
     print(f"Wrote LaTeX tables to: {OUTPUT_DIR}")

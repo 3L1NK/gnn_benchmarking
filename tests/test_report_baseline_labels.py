@@ -69,7 +69,7 @@ def test_report_outputs_rebased_label_and_window_dates(tmp_path, monkeypatch):
         "model_family": "gnn",
         "edge_type": "corr",
         "directed": False,
-        "graph_window": "2000-01-01..2019-12-31",
+        "graph_window": "2000-01-01..2015-12-31",
         "target_type": "regression",
         "target_horizon": 1,
         "lookback_window": 60,
@@ -78,7 +78,7 @@ def test_report_outputs_rebased_label_and_window_dates(tmp_path, monkeypatch):
         "split_val_start": "2016-01-01",
         "split_test_start": "2020-01-01",
         "rebalance_freq": 1,
-        "baseline_version": "price_bh_v2_eqw_v1",
+        "baseline_version": "price_bh_v2_eqw_v2",
         "target_policy_hash": "abc123",
         "prediction_rows": 4,
         "prediction_unique_pairs": 4,
@@ -129,5 +129,5 @@ def test_report_outputs_rebased_label_and_window_dates(tmp_path, monkeypatch):
     assert baseline_context.loc[0, "test_start_date"] == "2020-01-02"
     assert baseline_context.loc[0, "test_end_date"] == "2024-12-27"
 
-    assert "buy_and_hold (test rebased)" in captured_labels
+    assert "Buy and hold (fixed shares)" in captured_labels
     assert any("Test window: 2020-01-02..2024-12-27" in t for t in captured_titles)

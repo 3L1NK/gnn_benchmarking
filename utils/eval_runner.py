@@ -33,6 +33,10 @@ from .predictions import sanitize_predictions, prediction_row_stats
 from .protocol import protocol_from_config
 from .results import build_experiment_result, save_experiment_result
 
+BUY_HOLD_LABEL = "Buy and hold (fixed shares)"
+EQW_LABEL = "Equal weight (rebalanced, all assets)"
+TOPK_LABEL = "Top K long-only (equal weight within Top K)"
+
 
 def _compute_daily_ic_hit(pred_df: pd.DataFrame, top_k: int) -> pd.DataFrame:
     rows = []
@@ -201,9 +205,9 @@ def evaluate_and_report(
         )
 
         eq_png = out_dir / f"{run_name}_equity_curve_reb{freq}.png"
-        plot_equity_curve(eq_series, f"{run_name} long only (reb={freq})", eq_png)
+        plot_equity_curve(eq_series, f"{run_name} - {TOPK_LABEL} (reb={int(freq)})", eq_png)
         if legacy_dir is not None:
-            plot_equity_curve(eq_series, f"{model_name.upper()} long only (reb={freq})", legacy_dir / f"{model_name}_equity_curve_reb{freq}.png")
+            plot_equity_curve(eq_series, f"{model_name.upper()} - {TOPK_LABEL} (reb={int(freq)})", legacy_dir / f"{model_name}_equity_curve_reb{freq}.png")
 
         eq_eqw, _, stats_eqw = get_equal_weight_for_window(
             config,
@@ -222,22 +226,28 @@ def evaluate_and_report(
         plot_equity_comparison(
             eq_series,
             eq_bh,
-            f"{run_name} vs buy_and_hold (test rebased) (reb={freq})",
+            f"{run_name} vs {BUY_HOLD_LABEL} (reb={int(freq)})",
             comp_bh,
-            bh_label="buy_and_hold (test rebased)",
+            bh_label=BUY_HOLD_LABEL,
             subtitle=bh_window_subtitle,
         )
-        plot_equity_comparison(eq_series, eq_eqw, f"{run_name} vs Equal Weight (reb={freq})", comp_eqw)
+        plot_equity_comparison(eq_series, eq_eqw, f"{run_name} vs {EQW_LABEL} (reb={int(freq)})", comp_eqw, bh_label=EQW_LABEL)
         if legacy_dir is not None:
             plot_equity_comparison(
                 eq_series,
                 eq_bh,
-                f"{model_name.upper()} vs buy_and_hold (test rebased) (reb={freq})",
+                f"{model_name.upper()} vs {BUY_HOLD_LABEL} (reb={int(freq)})",
                 legacy_dir / f"{model_name}_vs_buy_and_hold_reb{freq}.png",
-                bh_label="buy_and_hold (test rebased)",
+                bh_label=BUY_HOLD_LABEL,
                 subtitle=bh_window_subtitle,
             )
-            plot_equity_comparison(eq_series, eq_eqw, f"{model_name.upper()} vs Equal Weight (reb={freq})", legacy_dir / f"{model_name}_vs_equal_weight_reb{freq}.png")
+            plot_equity_comparison(
+                eq_series,
+                eq_eqw,
+                f"{model_name.upper()} vs {EQW_LABEL} (reb={int(freq)})",
+                legacy_dir / f"{model_name}_vs_equal_weight_reb{freq}.png",
+                bh_label=EQW_LABEL,
+            )
 
         ic_series = metrics.set_index("date")["ic"].dropna()
         rolling = pd.DataFrame({"date": metrics["date"]}).copy()
@@ -258,7 +268,7 @@ def evaluate_and_report(
                 out_dir / f"{run_name}_equity_curve.csv",
                 legacy_dir / f"{model_name}_equity_curve.csv" if legacy_dir is not None else None,
             )
-            plot_equity_curve(eq_series, f"{run_name} long only", out_dir / f"{run_name}_equity_curve.png")
+            plot_equity_curve(eq_series, f"{run_name} - {TOPK_LABEL}", out_dir / f"{run_name}_equity_curve.png")
             plot_equity_curve(
                 eq_bh,
                 f"buy_and_hold (test rebased)\n{bh_window_subtitle}",
@@ -268,15 +278,15 @@ def evaluate_and_report(
             plot_equity_comparison(
                 eq_series,
                 eq_bh,
-                f"{run_name}: Model vs buy_and_hold (test rebased)",
+                f"{run_name}: Model vs {BUY_HOLD_LABEL}",
                 out_dir / f"{run_name}_vs_buy_and_hold.png",
-                bh_label="buy_and_hold (test rebased)",
+                bh_label=BUY_HOLD_LABEL,
                 subtitle=bh_window_subtitle,
             )
             rolling.to_csv(out_dir / f"{run_name}_rolling_metrics.csv", index=False)
             if legacy_dir is not None:
                 metrics.to_csv(legacy_dir / f"{model_name}_daily_metrics.csv", index=False)
-                plot_equity_curve(eq_series, f"{model_name.upper()} long only", legacy_dir / f"{model_name}_equity_curve.png")
+                plot_equity_curve(eq_series, f"{model_name.upper()} - {TOPK_LABEL}", legacy_dir / f"{model_name}_equity_curve.png")
                 plot_equity_curve(
                     eq_bh,
                     f"buy_and_hold (test rebased)\n{bh_window_subtitle}",
@@ -286,9 +296,9 @@ def evaluate_and_report(
                 plot_equity_comparison(
                     eq_series,
                     eq_bh,
-                    f"{model_name.upper()} vs buy_and_hold (test rebased)",
+                    f"{model_name.upper()} vs {BUY_HOLD_LABEL}",
                     legacy_dir / f"{model_name}_equity_comparison.png",
-                    bh_label="buy_and_hold (test rebased)",
+                    bh_label=BUY_HOLD_LABEL,
                     subtitle=bh_window_subtitle,
                 )
                 rolling.to_csv(legacy_dir / f"{model_name}_rolling_metrics.csv", index=False)

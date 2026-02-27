@@ -17,12 +17,12 @@ python scripts/build_thesis_report.py --build-pdf
 The tuned matrix writes its ledger to \texttt{results/results\_tuned\_all.jsonl}. Report artifacts are exported to \texttt{results/reports/thesis\_tuned\_all/}.
 
 \section{Run Matrix Definition}
-The tuned benchmark matrix contains 13 model variants and two rebalance policies (1 and 5), yielding 26 canonical rows after deduplication by stable run key.
+The tuned benchmark matrix contains 14 model variants and two rebalance policies (1 and 5), yielding 28 canonical rows after deduplication by stable run key.
 
 Model variants:
 \begin{itemize}
   \item \textbf{Non-graph}: \texttt{xgb\_raw}, \texttt{lstm}
-  \item \textbf{Graph-feature}: \texttt{xgb\_node2vec\_corr}
+  \item \textbf{Graph-feature}: \texttt{xgb\_node2vec\_corr}, \texttt{graphlasso\_linear}
   \item \textbf{Static GNN}: GCN/GAT with \texttt{corr}, \texttt{sector}, \texttt{granger}, \texttt{corr+sector+granger}
   \item \textbf{Static temporal-labeled}: \texttt{tgcn\_static\_corr\_only}, \texttt{tgat\_static\_corr\_only}
 \end{itemize}
@@ -46,6 +46,7 @@ The thesis consumes generated CSV and PNG artifacts only; no table values are en
   \item \texttt{edge\_ablation\_summary.csv}: GNN edge-type aggregate diagnostics
   \item \texttt{decision\_ranking.csv}: deterministic deployment ranking
   \item \texttt{baseline\_context.csv}: global vs test-window buy-and-hold context
+  \item \texttt{baseline\_policy\_comparison.csv}: baseline benchmark metrics (\textit{Buy and hold (fixed shares)}, \textit{Equal weight (rebalanced, all assets)})
 \end{itemize}
 
 \section{Canonical Run Matrix Table}
@@ -63,7 +64,7 @@ The pipeline enforces:
   \item prediction artifact audits for duplicate \texttt{(date,ticker)} rows,
   \item no-NaN guards on thesis-critical metrics,
   \item plot point-count sanity checks per rebalance policy,
-  \item expected run-matrix size checks (26 rows for tuned-all).
+  \item expected run-matrix size checks (28 rows for tuned-all).
 \end{itemize}
 If any check fails, report generation stops instead of producing partially valid thesis artifacts.
 

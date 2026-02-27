@@ -21,8 +21,10 @@ from utils.prediction_audit import PredictionAuditIssue, audit_prediction_file
 
 CORE_MATRIX_CONFIGS = [
     "configs/runs/core/xgb_raw.yaml",
+    "configs/runs/core/mlp.yaml",
     "configs/runs/core/lstm.yaml",
     "configs/runs/core/xgb_node2vec_corr.yaml",
+    "configs/runs/core/xgb_graphlasso_linear.yaml",
     "configs/runs/core/gcn_corr_only.yaml",
     "configs/runs/core/gcn_sector_only.yaml",
     "configs/runs/core/gcn_granger_only.yaml",

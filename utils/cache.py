@@ -5,8 +5,13 @@ import os
 import time
 import pickle
 import numpy as np
-import torch
 from joblib import dump, load
+
+
+def _torch_module():
+    import importlib
+
+    return importlib.import_module("torch")
 
 
 def cache_dir():
@@ -47,8 +52,14 @@ def cache_load(path):
         return None
     suffix = path.suffix.lower()
     if suffix in {".pt", ".pth"}:
-        # We store arbitrary Python objects (not just weights), so allow full pickle.
-        return torch.load(path, map_location="cpu", weights_only=False)
+        try:
+            torch = _torch_module()
+            # We store arbitrary Python objects (not just weights), so allow full pickle.
+            return torch.load(path, map_location="cpu", weights_only=False)
+        except Exception:
+            # Fallback for environments where torch cannot be imported.
+            with path.open("rb") as f:
+                return pickle.load(f)
     if suffix == ".npy":
         return np.load(path, allow_pickle=True)
     if suffix == ".joblib":
@@ -63,7 +74,12 @@ def cache_save(path, obj):
     path.parent.mkdir(parents=True, exist_ok=True)
     suffix = path.suffix.lower()
     if suffix in {".pt", ".pth"}:
-        torch.save(obj, path)
+        try:
+            torch = _torch_module()
+            torch.save(obj, path)
+        except Exception:
+            with path.open("wb") as f:
+                pickle.dump(obj, f)
     elif suffix == ".npy":
         np.save(path, obj)
     elif suffix == ".joblib":

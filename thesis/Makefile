@@ -27,10 +27,10 @@ tables:
 	THESIS_REPORT_DIR=$(REPORT_OUT) $(PYTHON) $(TABLE_SCRIPT)
 
 report:
-	$(PYTHON) $(REPORT_SCRIPT) --results $(RESULTS_PATH) --out $(REPORT_OUT) --expected-runs 26
+	$(PYTHON) $(REPORT_SCRIPT) --results $(RESULTS_PATH) --out $(REPORT_OUT) --expected-runs 30
 
 full:
 	$(PYTHON) $(DEDUP_SCRIPT) --results $(RESULTS_PATH)
-	$(PYTHON) $(REPORT_SCRIPT) --results $(RESULTS_PATH) --out $(REPORT_OUT) --expected-runs 26
+	$(PYTHON) $(REPORT_SCRIPT) --results $(RESULTS_PATH) --out $(REPORT_OUT) --expected-runs 30
 	THESIS_REPORT_DIR=$(REPORT_OUT) $(PYTHON) $(TABLE_SCRIPT)
 	$(LATEXMK) -pdf -interaction=nonstopmode -halt-on-error $(MAIN)

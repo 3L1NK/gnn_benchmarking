@@ -219,7 +219,7 @@ Supported keys:
 | daily metrics | `experiments/<run_tag>/<model>_daily_metrics_reb{1,5}.csv` | eval runner | IC/hit/returns/drawdown timeline |
 | model equity | `experiments/<run_tag>/<model>_equity_curve_reb{1,5}.csv` | eval runner | policy-specific equity path |
 | buy-and-hold window baseline | `experiments/<run_tag>/buy_and_hold_equity_curve.csv` | eval runner | sliced/rebased baseline for fair test-window comparison |
-| equal-weight baseline | `experiments/<run_tag>/equal_weight_equity_curve_reb{1,5}.csv` | eval runner | additional reference baseline |
+| equal-weight baseline (all assets) | `experiments/<run_tag>/equal_weight_equity_curve_reb{1,5}.csv` | eval runner | additional reference baseline |
 | master report table | `results/reports/thesis_tuned_all/master_comparison.csv` | `scripts/generate_thesis_report.py` | full ranked comparison table |
 | family summary | `results/reports/thesis_tuned_all/family_summary.csv` | report script | best-by-family compact view |
 | edge ablation summary | `results/reports/thesis_tuned_all/edge_ablation_summary.csv` | report script | edge-type aggregated performance |
@@ -239,7 +239,7 @@ Supported keys:
 Command:
 
 ```bash
-python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 26
+python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 28
 ```
 
 ## 11. Targeted Retune Workflow
@@ -333,7 +333,7 @@ If your existing report CSVs were generated before these changes, they can be st
 Regenerate using:
 
 ```bash
-python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 26
+python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 28
 ```
 
 For retune outputs:

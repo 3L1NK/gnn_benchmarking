@@ -7,7 +7,7 @@ from utils.data_loading import load_price_panel
 from utils.metrics import portfolio_metrics
 
 
-BASELINE_VERSION = "price_bh_v2_eqw_v1"
+BASELINE_VERSION = "price_bh_v2_eqw_v2"
 GLOBAL_BASELINE_CSV = Path("data/processed/baselines/buy_and_hold_global.csv")
 GLOBAL_EQUAL_WEIGHT_CSV = Path("data/processed/baselines/equal_weight_global.csv")
 
@@ -170,6 +170,7 @@ def compute_equal_weight_rebalanced(
     max_ffill_gap: int = 5,
     risk_free_rate: float = 0.0,
     rebalance_freq: int = 1,
+    return_diagnostics: bool = False,
 ):
     if rebalance_freq < 1:
         raise ValueError(f"rebalance_freq must be >= 1, got {rebalance_freq}")
@@ -187,27 +188,54 @@ def compute_equal_weight_rebalanced(
     if n_assets == 0:
         raise ValueError("No assets available for equal-weight baseline.")
 
-    eq = initial_value
+    eq = float(initial_value)
     eq_vals = []
     daily_ret = []
     turnover_series = []
-    prev_w = np.zeros(n_assets, dtype=float)
+    prev_close_w = np.zeros(n_assets, dtype=float)
+    rebalance_dates = []
+    close_weights = []
     for i, (_, row) in enumerate(ret.iterrows()):
-        if i % rebalance_freq == 0:
-            w = np.full(n_assets, 1.0 / n_assets, dtype=float)
+        row_ret = row.values.astype(float, copy=False)
+
+        rebalance_now = (i % rebalance_freq == 0) or (i == 0)
+        if rebalance_now:
+            target_w = np.full(n_assets, 1.0 / n_assets, dtype=float)
+            turnover = float(np.abs(target_w - prev_close_w).sum())
+            open_w = target_w
+            rebalance_dates.append(ret.index[i])
         else:
-            w = prev_w
-        turnover = float(np.abs(w - prev_w).sum())
-        r = float(np.dot(w, row.values))
-        eq *= (1.0 + r)
+            turnover = 0.0
+            open_w = prev_close_w
+
+        port_ret = float(np.dot(open_w, row_ret))
+        eq *= (1.0 + port_ret)
         eq_vals.append(eq)
-        daily_ret.append(r)
-        turnover_series.append(turnover if i % rebalance_freq == 0 else 0.0)
-        prev_w = w
+        daily_ret.append(port_ret)
+        turnover_series.append(turnover)
+
+        gross = open_w * (1.0 + row_ret)
+        denom = float(gross.sum())
+        if denom <= 0.0 or not np.isfinite(denom):
+            prev_close_w = np.full(n_assets, 1.0 / n_assets, dtype=float)
+        else:
+            prev_close_w = gross / denom
+        close_weights.append(prev_close_w.copy())
 
     eq_series = pd.Series(eq_vals, index=ret.index, name="equal_weight")
     stats = portfolio_metrics(eq_series, daily_ret, risk_free_rate)
     stats["avg_turnover"] = float(np.mean(turnover_series)) if turnover_series else 0.0
+    if return_diagnostics:
+        diagnostics = {
+            "rebalance_dates": pd.DatetimeIndex(rebalance_dates),
+            "rebalance_count": int(len(rebalance_dates)),
+            "turnover_series": pd.Series(turnover_series, index=ret.index, name="turnover"),
+            "turnover_mean": float(np.mean(turnover_series)) if turnover_series else 0.0,
+            "turnover_median": float(np.median(turnover_series)) if turnover_series else 0.0,
+            "turnover_max": float(np.max(turnover_series)) if turnover_series else 0.0,
+            "close_weights": pd.DataFrame(close_weights, index=ret.index, columns=ret.columns),
+        }
+        return eq_series, np.asarray(daily_ret, dtype=float), stats, diagnostics
     return eq_series, np.asarray(daily_ret, dtype=float), stats
 
 

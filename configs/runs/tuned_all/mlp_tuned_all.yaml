@@ -1,0 +1,69 @@
+experiment_name: mlp_tuned_all
+data:
+  price_file: data/processed/prices.parquet
+  universe_file: data/processed/universe.csv
+  start_date: '2000-01-01'
+  end_date: '2024-12-31'
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  lookback_window: 60
+  min_history: 250
+model:
+  family: mlp
+  type: mlp
+  hidden_dim_1: 128
+  hidden_dim_2: 64
+  dropout: 0.1
+training:
+  device: cuda
+  batch_size: 512
+  lr: 0.0005
+  weight_decay: 1.0e-05
+  max_epochs: 40
+  patience: 6
+  val_start: '2016-01-01'
+  test_start: '2020-01-01'
+evaluation:
+  top_k: 20
+  transaction_cost_bps: 0
+  risk_free_rate: 0.0
+  backtest_policies:
+  - 1
+  - 5
+  primary_rebalance_freq: 1
+  results_path: results/results_tuned_all.jsonl
+  out_dir: experiments_tuned_all/mlp
+experiment:
+  protocol_version: v1_thesis_core
+  enforce_protocol: true
+tuning:
+  enabled: true
+  objective: val_backtest_sharpe_annualized
+  sample_mode: random
+  seed: 42
+  max_trials: 18
+  tune_max_epochs: 12
+  tune_patience: 4
+  param_grid:
+    hidden_dim_1:
+    - 64
+    - 128
+    - 192
+    hidden_dim_2:
+    - 32
+    - 64
+    - 96
+    dropout:
+    - 0.0
+    - 0.1
+    - 0.2
+    lr:
+    - 0.0003
+    - 0.0005
+    - 0.001
+    weight_decay:
+    - 0.0
+    - 1.0e-05
+    - 5.0e-05
+  profile: medium
