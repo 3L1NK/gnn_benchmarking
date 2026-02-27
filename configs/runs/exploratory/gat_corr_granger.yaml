@@ -48,6 +48,6 @@ loss:
 
 evaluation:
   top_k: 20
-  transaction_cost_bps: 5
+  transaction_cost_bps: 0
   risk_free_rate: 0.0
   out_dir: "experiments/gat_corr_granger"

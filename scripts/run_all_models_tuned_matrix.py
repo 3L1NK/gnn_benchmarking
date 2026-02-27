@@ -19,8 +19,10 @@ from utils.config_normalize import load_config
 
 CORE_MATRIX_CONFIGS = [
     "configs/runs/core/xgb_raw.yaml",
+    "configs/runs/core/mlp.yaml",
     "configs/runs/core/lstm.yaml",
     "configs/runs/core/xgb_node2vec_corr.yaml",
+    "configs/runs/core/xgb_graphlasso_linear.yaml",
     "configs/runs/core/gcn_corr_only.yaml",
     "configs/runs/core/gcn_sector_only.yaml",
     "configs/runs/core/gcn_granger_only.yaml",
@@ -37,10 +39,10 @@ CORE_MATRIX_CONFIGS = [
 def _budget_profile(name: str) -> dict:
     key = name.strip().lower()
     if key == "quick":
-        return {"gnn_trials": 6, "xgb_trials": 10, "lstm_trials": 10}
+        return {"gnn_trials": 6, "xgb_trials": 10, "lstm_trials": 10, "mlp_trials": 12}
     if key == "heavy":
-        return {"gnn_trials": 20, "xgb_trials": 30, "lstm_trials": 24}
-    return {"gnn_trials": 12, "xgb_trials": 24, "lstm_trials": 18}
+        return {"gnn_trials": 20, "xgb_trials": 30, "lstm_trials": 24, "mlp_trials": 24}
+    return {"gnn_trials": 12, "xgb_trials": 24, "lstm_trials": 18, "mlp_trials": 18}
 
 
 def _xgb_tuning_grid(run_tag: str) -> dict:
@@ -87,6 +89,16 @@ def _lstm_tuning_grid() -> dict:
     }
 
 
+def _mlp_tuning_grid() -> dict:
+    return {
+        "hidden_dim_1": [64, 128, 192],
+        "hidden_dim_2": [32, 64, 96],
+        "dropout": [0.0, 0.1, 0.2],
+        "lr": [3e-4, 5e-4, 1e-3],
+        "weight_decay": [0.0, 1e-5, 5e-5],
+    }
+
+
 def _inject_tuning(cfg: dict, *, run_tag: str, profile: dict) -> dict:
     tuned = deepcopy(cfg)
     model = tuned.get("model", {}) or {}
@@ -112,6 +124,11 @@ def _inject_tuning(cfg: dict, *, run_tag: str, profile: dict) -> dict:
         tuned["tuning"]["tune_max_epochs"] = 12
         tuned["tuning"]["tune_patience"] = 4
         tuned["tuning"]["param_grid"] = _lstm_tuning_grid()
+    elif family == "mlp":
+        tuned["tuning"]["max_trials"] = int(profile["mlp_trials"])
+        tuned["tuning"]["tune_max_epochs"] = 12
+        tuned["tuning"]["tune_patience"] = 4
+        tuned["tuning"]["param_grid"] = _mlp_tuning_grid()
     else:
         tuned["tuning"]["max_trials"] = 8
         tuned["tuning"]["param_grid"] = {}
@@ -195,7 +212,8 @@ def main() -> None:
     generated = _write_generated_configs(args.budget, profile)
     print(
         f"[tuned-all] generated {len(generated)} configs "
-        f"(budget={args.budget}: gnn={profile['gnn_trials']} xgb={profile['xgb_trials']} lstm={profile['lstm_trials']})"
+        f"(budget={args.budget}: gnn={profile['gnn_trials']} xgb={profile['xgb_trials']} "
+        f"lstm={profile['lstm_trials']} mlp={profile['mlp_trials']})"
     )
 
     if args.fresh_results:
@@ -221,7 +239,7 @@ def main() -> None:
             "--out",
             args.report_out,
             "--expected-runs",
-            "26",
+            str(len(CORE_MATRIX_CONFIGS) * 2),
         ]
         print(f"[tuned-all] running {' '.join(report_cmd)}")
         proc = subprocess.run(report_cmd, cwd=REPO_ROOT)

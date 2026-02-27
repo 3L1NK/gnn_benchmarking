@@ -1,0 +1,16 @@
+experiment_dir,summary_json_count,summary_json_files,best_checkpoint_files,best_params_files,sharpe_reb1,sharpe_reb5,final_reb1,final_reb5
+experiments_tuned_all/gat_corr_only,2,gat_corr_only_tuned_all_summary.json;gat_summary.json,best_gat.pt,,0.5625310256726028,0.5908391809007324,1.6310729102043744,1.6748603764814354
+experiments_tuned_all/gat_corr_sector_granger,2,gat_corr_sector_granger_tuned_all_summary.json;gat_summary.json,best_gat.pt,,0.4550387516581133,0.7029591579400769,1.4379277217339108,1.8530767382806195
+experiments_tuned_all/gat_granger_only,2,gat_granger_only_tuned_all_summary.json;gat_summary.json,best_gat.pt,,0.4994920373673811,0.6549948025077305,1.5188657657728564,1.8077341319837572
+experiments_tuned_all/gat_sector_only,2,gat_sector_only_tuned_all_summary.json;gat_summary.json,best_gat.pt,,0.4767232559845921,0.6696240389564669,1.4726365750914756,1.8175871356687368
+experiments_tuned_all/gcn_corr_only,2,gcn_corr_only_tuned_all_summary.json;gcn_summary.json,best_gcn.pt,,0.44737853093226665,0.6292001055196221,1.3941075266378564,1.6730679324288704
+experiments_tuned_all/gcn_corr_sector_granger,2,gcn_corr_sector_granger_tuned_all_summary.json;gcn_summary.json,best_gcn.pt,,0.5365343100442168,0.5736344449180438,1.5212192176610173,1.6009515498406652
+experiments_tuned_all/gcn_granger_only,2,gcn_granger_only_tuned_all_summary.json;gcn_summary.json,best_gcn.pt,,0.5541290529992077,0.5979955747971006,1.5643974680128392,1.649135316135523
+experiments_tuned_all/gcn_sector_only,2,gcn_sector_only_tuned_all_summary.json;gcn_summary.json,best_gcn.pt,,0.6060515515289385,0.691637804723037,1.6847941653072525,1.8619824557320799
+experiments_tuned_all/graphlasso_linear,2,graphlasso_linear_summary.json;graphlasso_linear_tuned_all_summary.json,,graphlasso_linear_best_params.json,0.41596633814038647,0.6029232458582146,1.4012738098294568,1.7206289003855555
+experiments_tuned_all/lstm,2,lstm_summary.json;lstm_tuned_all_summary.json,best_lstm.pt,,0.5322895406190647,0.7143462410918565,1.5743019095890234,1.9007722009428718
+experiments_tuned_all/mlp,2,mlp_summary.json;mlp_tuned_all_summary.json,best_mlp.pt,,0.8702984391604671,0.7982722589442223,2.2200504294386136,2.0996490786184268
+experiments_tuned_all/tgat_static_corr_only,2,tgat_static_corr_only_tuned_all_summary.json;tgat_static_summary.json,best_tgat_static.pt,,0.5055379029034531,0.6922621949607604,1.548535643084901,1.901442495938041
+experiments_tuned_all/tgcn_static_corr_only,2,tgcn_static_corr_only_tuned_all_summary.json;tgcn_static_summary.json,best_tgcn_static.pt,,0.41626622771915384,0.6231338899084942,1.3712052649495163,1.7289694387086214
+experiments_tuned_all/xgb_node2vec_corr,2,xgb_node2vec_corr_tuned_all_summary.json;xgb_node2vec_summary.json,,,0.660173998899534,0.8058302190730464,1.7477071345368558,2.011157102306581
+experiments_tuned_all/xgb_raw,2,xgb_raw_summary.json;xgb_raw_tuned_all_summary.json,,,0.5114863327813393,0.7389780644914193,1.499533759701447,1.8725595579086243

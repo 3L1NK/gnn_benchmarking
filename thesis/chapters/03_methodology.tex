@@ -71,7 +71,7 @@ where $G_t$ is omitted for non-graph baselines. Forecasts are converted into cro
 The matrix includes four categories:
 \begin{itemize}
   \item non-graph baselines: \texttt{xgb\_raw}, \texttt{lstm},
-  \item graph-feature baseline: \texttt{xgb\_node2vec\_corr},
+  \item graph-feature baselines: \texttt{xgb\_node2vec\_corr}, \texttt{graphlasso\_linear},
   \item static GNN ablations: GCN/GAT with \texttt{corr}, \texttt{sector}, \texttt{granger}, and \texttt{corr+sector+granger},
   \item temporal-labeled static variants: \texttt{tgcn\_static\_*}, \texttt{tgat\_static\_*}.
 \end{itemize}
@@ -102,7 +102,7 @@ Granger relations use pairwise tests on train-window returns only. Canonical cor
 Edges are not re-estimated on validation/test slices, preserving causal chronology.
 
 \subsection{Graphical Lasso Variants}
-Graphical Lasso variants are included as exploratory/graph-feature references with explicit regularization parameter $\alpha$ and train-window fitting only. They are not used to define the main 13-model tuned matrix.
+Graphical Lasso linear smoothing is included in the canonical tuned matrix as a graph-feature baseline with explicit regularization parameter $\alpha$ and train-window fitting only.
 
 \section{Training and Hyperparameter Search}
 Training follows one CLI entrypoint and shared protocol enforcement. The tuned-all matrix uses a random-search tuning objective of validation backtest annualized Sharpe. Budget profile \texttt{medium} corresponds to:

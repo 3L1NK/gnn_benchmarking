@@ -19,7 +19,7 @@ It is prewired to use artifacts generated under `results/reports/thesis_tuned_al
 1. Regenerate thesis report artifacts (from repo root):
 
 ```bash
-python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 26
+python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 28
 ```
 
 2. Regenerate LaTeX tables:

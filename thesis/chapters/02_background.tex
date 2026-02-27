@@ -1,28 +1,50 @@
-This chapter builds the theoretical foundation needed to interpret the benchmark design and the empirical results.
+This chapter builds the theoretical foundation needed to 
+interpret the benchmark design and the empirical results.
 
 \section{Forecasting Equities as a Weak-Signal Ranking Problem}
-Short-horizon equity forecasting is fundamentally a low signal-to-noise problem. Under efficient-market arguments, predictable structure in liquid markets should be limited, unstable, and quickly arbitraged \citep{fama1970efficient}. In practice, this means that improvements in point-error metrics can be small, and many apparent gains vanish when tested out-of-sample unless evaluation is strictly out-of-time and portfolio-aware.
+Short-horizon equity forecasting is fundamentally a low signal-to-noise problem. 
+Under efficient-market arguments, predictable structure in liquid markets should be 
+limited, unstable, and quickly arbitraged \citep{fama1970efficient}. 
+In practice, this means that improvements in point-error metrics can be small, 
+and many apparent gains vanish when tested out-of-sample unless evaluation is
+strictly out-of-time and portfolio-aware.
 
-Let $r_{i,t+1}$ be the next-period return for asset $i$, and let $\hat{r}_{i,t+1}$ be a model forecast. In a portfolio context, the objective is typically not exact level prediction but cross-sectional ordering:
+Let $r_{i,t+1}$ be the next-period return for asset $i$, and let $\hat{r}_{i,t+1}$ be a model forecast.
+In a portfolio context, the objective is typically not exact level 
+prediction but cross-sectional ordering:
+
 \[
 \hat{r}_{i,t+1} > \hat{r}_{j,t+1} \Rightarrow \text{prefer } i \text{ over } j.
 \]
-This motivates rank-based diagnostics such as Information Coefficient (IC), while still tracking point-error metrics (RMSE, MAE) for calibration quality. The emphasis on ranking is consistent with active-management practice, where signal quality is translated into portfolio weights and constrained execution \citep{grinold1989fundamental}.
+
+This motivates rank-based diagnostics such as Information Coefficient (IC),
+while still tracking point-error metrics (RMSE, MAE) for calibration quality. 
+The emphasis on ranking is consistent with active-management practice, 
+where signal quality is translated into portfolio weights and constrained execution \citep{grinold1989fundamental}.
 
 \section{Core Neural-Network Foundations}
 \subsection{Feed-forward Networks}
 A feed-forward neural network composes affine transformations and nonlinear activations:
+
 \[
 \mathbf{h}^{(l+1)} = \sigma\!\left(\mathbf{W}^{(l)}\mathbf{h}^{(l)} + \mathbf{b}^{(l)}\right).
 \]
-Depth allows hierarchical representation learning, where early layers model simple feature interactions and later layers model more abstract structure \citep{goodfellow2016deep}. In finance tabular settings, this flexibility can capture nonlinear interactions between lagged returns, technical indicators, and cross-sectional features.
+
+Depth allows hierarchical representation learning, where early layers model 
+simple feature interactions and later layers model more abstract structure \citep{goodfellow2016deep}.
+In finance tabular settings, this flexibility can capture nonlinear interactions between lagged returns, technical indicators, and cross-sectional features.
 
 \subsection{Backpropagation and Optimization}
 Training minimizes an empirical loss over samples:
+
 \[
 \min_{\theta} \frac{1}{N}\sum_{n=1}^{N}\mathcal{L}(f_{\theta}(x_n), y_n),
 \]
-where $\theta$ contains all model parameters. Gradients are computed efficiently via backpropagation and the chain rule \citep{rumelhart1986learning}. Parameter updates are then performed with stochastic gradient methods; Adam is a common default because it adaptively rescales learning rates by first and second moments of historical gradients \citep{kingma2015adam}.
+
+where $\theta$ contains all model parameters. 
+Gradients are computed efficiently via backpropagation 
+and the chain rule \citep{rumelhart1986learning}. 
+Parameter updates are then performed with stochastic gradient methods; Adam is a common default because it adaptively rescales learning rates by first and second moments of historical gradients \citep{kingma2015adam}.
 
 \subsection{Generalization Controls}
 Because financial regimes shift, controlling overfitting is central. Standard controls include:
@@ -32,21 +54,39 @@ Because financial regimes shift, controlling overfitting is central. Standard co
   \item Normalization layers such as Batch Normalization for more stable optimization \citep{ioffe2015batchnorm}.
   \item Early stopping using a chronologically valid validation slice.
 \end{itemize}
-These controls do not guarantee robustness, but they reduce the chance that apparent in-sample fit is purely noise.
+These controls do not guarantee robustness, 
+but they reduce the chance that apparent in-sample fit is purely noise.
 
 \section{Sequence Modeling for Financial Time Series}
-Recurrent models represent temporal dependence by maintaining hidden state across time. Long Short-Term Memory (LSTM) networks introduce gating mechanisms (input, forget, output gates) to mitigate vanishing gradients and preserve long-range dependencies \citep{hochreiter1997lstm}. For return forecasting, LSTMs are often used as sequence baselines because they can learn lag structures that fixed-window linear models may miss.
+Recurrent models represent temporal dependence by maintaining hidden 
+state across time. Long Short-Term Memory (LSTM) networks introduce gating 
+mechanisms (input, forget, output gates) to mitigate vanishing gradients and 
+preserve long-range dependencies \citep{hochreiter1997lstm}. For return forecasting, 
+LSTMs are often used as sequence baselines because they can learn lag structures 
+that fixed-window linear models may miss.
 
-However, pure sequence models process each asset stream independently unless additional relational features are injected. This limits their ability to represent contemporaneous cross-asset propagation effects (for example sector shocks diffusing through highly connected equities).
+However, pure sequence models process each asset stream independently unless 
+additional relational features are injected. This limits their ability to represent 
+contemporaneous cross-asset propagation effects (for example sector shocks diffusing 
+through highly connected equities).
 
 \section{Gradient-Boosted Trees as Strong Tabular Baselines}
-Gradient boosting builds an additive ensemble of weak learners (typically shallow trees) fit to residual gradients of the loss \citep{friedman2001greedy}. XGBoost extends this framework with regularization, sparse-aware split finding, shrinkage, and systems-level optimizations, making it a highly competitive baseline on heterogeneous tabular data \citep{chen2016xgboost}. In many applied forecasting tasks, a carefully tuned boosted-tree model remains difficult to beat consistently.
+Gradient boosting builds an additive ensemble of weak learners 
+(typically shallow trees) fit to residual gradients of the loss \citep{friedman2001greedy}. 
+XGBoost extends this framework with regularization, sparse-aware split finding, shrinkage, 
+and systems-level optimizations, making it a highly competitive baseline on heterogeneous 
+tabular data \citep{chen2016xgboost}. In many applied forecasting tasks, a carefully tuned 
+boosted-tree model remains difficult to beat consistently.
 
-For this reason, any claim that graph models are ``better'' should be evaluated against strong non-graph baselines, not only against weak linear references.
+For this reason, any claim that graph models are ``better'' should be evaluated 
+against strong non-graph baselines, not only against weak linear references.
 
 \section{Graph Learning for Cross-Asset Structure}
 \subsection{Why Graphs}
-An equity universe is naturally relational: companies share sectors, supply-chain links, common macro sensitivities, and co-movement structure. Graph learning formalizes this by representing assets as nodes $V$ and relations as edges $E$, giving $G=(V,E)$ with feature matrix $\mathbf{X}$ and adjacency matrix $\mathbf{A}$.
+An equity universe is naturally relational: companies share sectors, 
+supply-chain links, common macro sensitivities, and co-movement structure. 
+Graph learning formalizes this by representing assets as nodes $V$ and relations as 
+edges $E$, giving $G=(V,E)$ with feature matrix $\mathbf{X}$ and adjacency matrix $\mathbf{A}$.
 
 \subsection{Message Passing}
 Many graph models follow a message-passing template:

@@ -1,4 +1,5 @@
 # trainers/train_xgboost.py
+import json
 from pathlib import Path
 import time
 
@@ -852,56 +853,213 @@ class XGBoostTrainer:
 
         set_seed(42)
         debug = bool(self.config.get("debug", {}).get("leakage", False))
-
         val_start = self.config["training"]["val_start"]
-        graph_window = f"{self.config['data']['start_date']}..{val_start}"
-        # `graphical_lasso_precision` treats end_date as exclusive, so pass the
-        # validation start directly and let the function exclude it.
-        _, _, _, adj = graphical_lasso_precision(
-            self.df,
-            start_date=self.config["data"]["start_date"],
-            end_date=val_start,
-            alpha=self.config.get("graphlasso_alpha", 0.01),
-        )
-
-        if debug:
-            print(f"[graphlasso_linear] graph window={self.config['data']['start_date']}..{val_start} (exclusive end)")
-
-        df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=0.5)
-
-        train_mask, val_mask, test_mask = _time_masks(
-            df_smooth["date"],
-            self.config["training"]["val_start"],
-            self.config["training"]["test_start"],
-            label="graphlasso_linear",
-            debug=debug,
-        )
+        test_start = self.config["training"]["test_start"]
+        start_date = self.config["data"]["start_date"]
+        returns_df = self.df[["date", "ticker", "log_ret_1d"]].copy()
 
         pre_cfg = self.config.get("preprocess", {})
         do_scale = bool(pre_cfg.get("scale_features", True))
-        df_scaled, _ = scale_features(
+        eval_cfg = self.config.get("evaluation", {})
+
+        tuning_cfg = self.config.get("tuning", {})
+        use_tuning = bool(tuning_cfg.get("enabled", False))
+        tuning_objective = str(tuning_cfg.get("objective", "val_rmse"))
+        sample_mode = str(tuning_cfg.get("sample_mode", "grid"))
+        max_trials = int(tuning_cfg.get("max_trials", 0) or 0)
+        tuning_seed = int(tuning_cfg.get("seed", self.config.get("seed", 42)))
+        param_grid = tuning_cfg.get("param_grid", {})
+
+        fixed_params = {
+            "graphlasso_alpha": float(self.config.get("graphlasso_alpha", 0.01)),
+            "graph_smooth_alpha": float(self.config.get("graph_smooth_alpha", 0.5)),
+            "ridge_alpha": float(self.config.get("ridge_alpha", 1.0)),
+        }
+
+        def _build_graphlasso_dataset(*, gl_alpha: float, smooth_alpha: float, graph_end_date: str, label: str):
+            _, _, _, adj = graphical_lasso_precision(
+                returns_df,
+                start_date=start_date,
+                end_date=graph_end_date,
+                alpha=gl_alpha,
+            )
+
+            df_smooth_local, smooth_cols_local = _add_graph_smooth_features(
+                self.df,
+                self.feat_cols,
+                adj,
+                alpha=smooth_alpha,
+            )
+
+            train_mask_local, val_mask_local, test_mask_local = _time_masks(
+                df_smooth_local["date"],
+                val_start,
+                test_start,
+                label=label,
+                debug=debug,
+            )
+
+            df_scaled_local, _ = scale_features(
+                df_smooth_local,
+                self.feat_cols + smooth_cols_local,
+                train_mask_local,
+                label=label,
+                debug=debug,
+                scale=do_scale,
+            )
+
+            X_local = df_scaled_local[self.feat_cols + smooth_cols_local].values.astype(float)
+            y_local = df_scaled_local["target"].values.astype(float)
+            return df_smooth_local, train_mask_local, val_mask_local, test_mask_local, X_local, y_local
+
+        train_start = time.time()
+        best_params = dict(fixed_params)
+        best_score = float("-inf")
+        best_metric_name = ""
+        best_metric_value = float("nan")
+        evaluated_trials = 0
+
+        if use_tuning:
+            candidates = enumerate_param_candidates(
+                fixed_params=fixed_params,
+                param_grid=param_grid,
+                sample_mode=sample_mode,
+                max_trials=max_trials,
+                seed=tuning_seed,
+            )
+            if not param_grid:
+                print("[graphlasso_linear] No tuning.param_grid provided; evaluating fixed params only.")
+            print(
+                f"[graphlasso_linear] tuning enabled: objective={tuning_objective} "
+                f"sample_mode={sample_mode} candidates={len(candidates)}"
+            )
+
+            for idx, params in enumerate(candidates, start=1):
+                gl_alpha = float(params.get("graphlasso_alpha", fixed_params["graphlasso_alpha"]))
+                smooth_alpha = float(params.get("graph_smooth_alpha", fixed_params["graph_smooth_alpha"]))
+                ridge_alpha = float(params.get("ridge_alpha", fixed_params["ridge_alpha"]))
+                try:
+                    (
+                        df_smooth,
+                        train_mask,
+                        val_mask,
+                        _,
+                        X,
+                        y,
+                    ) = _build_graphlasso_dataset(
+                        gl_alpha=gl_alpha,
+                        smooth_alpha=smooth_alpha,
+                        graph_end_date=val_start,
+                        label=f"graphlasso_linear_tune_{idx}",
+                    )
+                except Exception as exc:
+                    print(f"[graphlasso_linear] candidate {idx} failed during feature build: {exc}")
+                    continue
+
+                X_train, y_train = X[train_mask], y[train_mask]
+                X_val, y_val = X[val_mask], y[val_mask]
+                if len(X_train) == 0 or len(X_val) == 0:
+                    print(f"[graphlasso_linear] candidate {idx} skipped due to empty train/val split.")
+                    continue
+
+                model = Ridge(alpha=ridge_alpha)
+                model.fit(X_train, y_train)
+                preds_val = model.predict(X_val)
+                evaluated_trials += 1
+
+                score_payload = score_prediction_objective(
+                    objective=tuning_objective,
+                    y_true=y_val,
+                    preds=preds_val,
+                    dates=df_smooth.loc[val_mask, "date"].to_numpy(),
+                    tickers=df_smooth.loc[val_mask, "ticker"].to_numpy(),
+                    top_k=int(eval_cfg.get("top_k", 20)),
+                    transaction_cost_bps=float(eval_cfg.get("transaction_cost_bps", 5.0)),
+                    risk_free_rate=float(eval_cfg.get("risk_free_rate", 0.0)),
+                    rebalance_freq=int(eval_cfg.get("primary_rebalance_freq", 1)),
+                )
+                metric_name = score_payload["metric_name"]
+                metric_value = score_payload["metric_value"]
+                score = score_payload["score"]
+                print(
+                    f"[graphlasso_linear] trial {idx}: "
+                    f"graphlasso_alpha={gl_alpha}, graph_smooth_alpha={smooth_alpha}, ridge_alpha={ridge_alpha} "
+                    f"{metric_name}={metric_value} score={score}"
+                )
+
+                if score > best_score:
+                    best_score = score
+                    best_metric_name = metric_name
+                    best_metric_value = float(metric_value)
+                    best_params = {
+                        "graphlasso_alpha": gl_alpha,
+                        "graph_smooth_alpha": smooth_alpha,
+                        "ridge_alpha": ridge_alpha,
+                    }
+
+            if evaluated_trials == 0:
+                raise RuntimeError("[graphlasso_linear] Tuning enabled but no valid trials were evaluated.")
+
+            print(
+                f"[graphlasso_linear] best params: {best_params} "
+                f"{best_metric_name}={best_metric_value} score={best_score}"
+            )
+
+        final_gl_alpha = float(best_params["graphlasso_alpha"])
+        final_smooth_alpha = float(best_params["graph_smooth_alpha"])
+        final_ridge_alpha = float(best_params["ridge_alpha"])
+
+        if debug:
+            print(f"[graphlasso_linear] graph window={start_date}..{test_start} (exclusive end)")
+
+        (
             df_smooth,
-            self.feat_cols + smooth_cols,
             train_mask,
-            label="graphlasso_linear",
-            debug=debug,
-            scale=do_scale,
+            val_mask,
+            test_mask,
+            X,
+            y,
+        ) = _build_graphlasso_dataset(
+            gl_alpha=final_gl_alpha,
+            smooth_alpha=final_smooth_alpha,
+            graph_end_date=test_start,
+            label="graphlasso_linear_final",
         )
-        X = df_scaled[self.feat_cols + smooth_cols].values.astype(float)
-        y = df_scaled["target"].values.astype(float)
 
         X_train, y_train = X[train_mask], y[train_mask]
         X_val, y_val = X[val_mask], y[val_mask]
         X_test, y_test = X[test_mask], y[test_mask]
 
-        train_start = time.time()
-        model = Ridge(alpha=1.0)
-        model.fit(X_train, y_train)
+        X_train_full = np.concatenate([X_train, X_val], axis=0)
+        y_train_full = np.concatenate([y_train, y_val], axis=0)
+
+        model = Ridge(alpha=final_ridge_alpha)
+        model.fit(X_train_full, y_train_full)
         train_seconds = time.time() - train_start
 
         infer_start = time.time()
         preds_test = model.predict(X_test)
         inference_seconds = time.time() - infer_start
+
+        best_params_payload = {
+            "model": "graphlasso_linear",
+            "best_params": best_params,
+            "tuning": {
+                "enabled": use_tuning,
+                "objective": tuning_objective,
+                "sample_mode": sample_mode,
+                "max_trials": max_trials,
+                "seed": tuning_seed,
+                "evaluated_trials": int(evaluated_trials),
+                "best_metric_name": best_metric_name,
+                "best_metric_value": best_metric_value,
+                "best_score": best_score,
+            },
+            "graph_window_tune": f"{start_date}..{val_start}",
+            "graph_window_final": f"{start_date}..{test_start}",
+        }
+        with (self.out_dir / "graphlasso_linear_best_params.json").open("w", encoding="utf-8") as f:
+            json.dump(best_params_payload, f, indent=2, sort_keys=True)
 
         df_test = df_smooth.loc[test_mask, ["date", "ticker"]].copy()
         df_test["pred"] = preds_test
@@ -914,7 +1072,7 @@ class XGBoostTrainer:
             result_meta={
                 "edge_type": "graphlasso",
                 "directed": False,
-                "graph_window": graph_window,
+                "graph_window": f"{start_date}..{test_start}",
                 "train_seconds": train_seconds,
                 "inference_seconds": inference_seconds,
             },
@@ -934,6 +1092,7 @@ class XGBoostTrainer:
         from xgboost import XGBRegressor
         set_seed(42)
         debug = bool(self.config.get("debug", {}).get("leakage", False))
+        smooth_alpha = float(self.config.get("graph_smooth_alpha", 0.5))
 
         returns_df = self.df[["date", "ticker", "log_ret_1d"]].copy()
 
@@ -951,7 +1110,7 @@ class XGBoostTrainer:
         if debug:
             print(f"[graphlasso_xgb] graph window={self.config['data']['start_date']}..{val_start} (exclusive end)")
 
-        df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=0.5)
+        df_smooth, smooth_cols = _add_graph_smooth_features(self.df, self.feat_cols, adj, alpha=smooth_alpha)
 
         train_mask, val_mask, test_mask = _time_masks(
             df_smooth["date"],

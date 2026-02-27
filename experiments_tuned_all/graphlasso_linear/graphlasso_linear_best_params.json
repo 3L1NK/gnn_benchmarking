@@ -1,0 +1,21 @@
+{
+  "best_params": {
+    "graph_smooth_alpha": 0.3,
+    "graphlasso_alpha": 0.05,
+    "ridge_alpha": 0.1
+  },
+  "graph_window_final": "2010-01-01..2020-01-01",
+  "graph_window_tune": "2010-01-01..2016-01-01",
+  "model": "graphlasso_linear",
+  "tuning": {
+    "best_metric_name": "sharpe_annualized",
+    "best_metric_value": 0.8295853642231046,
+    "best_score": 0.8295853642231046,
+    "enabled": true,
+    "evaluated_trials": 8,
+    "max_trials": 8,
+    "objective": "val_backtest_sharpe_annualized",
+    "sample_mode": "random",
+    "seed": 42
+  }
+}

@@ -6,36 +6,40 @@
 \small
 \setlength{\tabcolsep}{4pt}
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{llllrrlll}
+\begin{tabular}{llllrllll}
 \toprule
 Run & Family & Model & Edge & Seed & Reb & Split ID & Config Hash & Status \\
 \midrule
-GAT (corr) & GNN & GAT & corr & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-GAT (corr+sec+gr) & GNN & GAT & corr+sec+gr & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-GAT (granger) & GNN & GAT & granger & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-GAT (sector) & GNN & GAT & sector & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-GCN (corr) & GNN & GCN & corr & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-GCN (corr+sec+gr) & GNN & GCN & corr+sec+gr & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-GCN (granger) & GNN & GCN & granger & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-GCN (sector) & GNN & GCN & sector & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-TGAT-static (corr) & GNN & TGAT-static & corr & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-TGCN-static (corr) & GNN & TGCN-static & corr & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-LSTM & LSTM & LSTM & none & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-XGB+Node2Vec (corr) & XGB & XGB+Node2Vec & n2v-corr & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-XGB & XGB & XGB & none & 42 & 1 & e677b2c83d8f & legacy\_confi & included \\
-GAT (corr) & GNN & GAT & corr & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-GAT (corr+sec+gr) & GNN & GAT & corr+sec+gr & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-GAT (granger) & GNN & GAT & granger & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-GAT (sector) & GNN & GAT & sector & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-GCN (corr) & GNN & GCN & corr & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-GCN (corr+sec+gr) & GNN & GCN & corr+sec+gr & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-GCN (granger) & GNN & GCN & granger & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-GCN (sector) & GNN & GCN & sector & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-TGAT-static (corr) & GNN & TGAT-static & corr & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-TGCN-static (corr) & GNN & TGCN-static & corr & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-LSTM & LSTM & LSTM & none & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-XGB+Node2Vec (corr) & XGB & XGB+Node2Vec & n2v-corr & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
-XGB & XGB & XGB & none & 42 & 5 & e677b2c83d8f & legacy\_confi & included \\
+GAT (corr) & GNN & GAT & corr & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+GAT (corr+sec+gr) & GNN & GAT & corr+sec+gr & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+GAT (granger) & GNN & GAT & granger & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+GAT (sector) & GNN & GAT & sector & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+GCN (corr) & GNN & GCN & corr & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+GCN (corr+sec+gr) & GNN & GCN & corr+sec+gr & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+GCN (granger) & GNN & GCN & granger & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+GCN (sector) & GNN & GCN & sector & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+TGAT-static (corr) & GNN & TGAT-static & corr & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+TGCN-static (corr) & GNN & TGCN-static & corr & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+LSTM & LSTM & LSTM & none & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+mlp & mlp & MLP & none & 42 & reb=1 & e677b2c83d8f & 2f660908496d & included \\
+graphlasso-linear & XGB & GRAPHLASSO\_LINEAR & graphlasso & 42 & reb=1 & e677b2c83d8f & 113d64fe54b5 & included \\
+XGB+Node2Vec (corr) & XGB & XGB+Node2Vec & n2v-corr & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+XGB & XGB & XGB & none & 42 & reb=1 & e677b2c83d8f & legacy\_confi & included \\
+GAT (corr) & GNN & GAT & corr & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+GAT (corr+sec+gr) & GNN & GAT & corr+sec+gr & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+GAT (granger) & GNN & GAT & granger & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+GAT (sector) & GNN & GAT & sector & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+GCN (corr) & GNN & GCN & corr & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+GCN (corr+sec+gr) & GNN & GCN & corr+sec+gr & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+GCN (granger) & GNN & GCN & granger & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+GCN (sector) & GNN & GCN & sector & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+TGAT-static (corr) & GNN & TGAT-static & corr & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+TGCN-static (corr) & GNN & TGCN-static & corr & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+LSTM & LSTM & LSTM & none & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+mlp & mlp & MLP & none & 42 & reb=5 & e677b2c83d8f & 2f660908496d & included \\
+graphlasso-linear & XGB & GRAPHLASSO\_LINEAR & graphlasso & 42 & reb=5 & e677b2c83d8f & 113d64fe54b5 & included \\
+XGB+Node2Vec (corr) & XGB & XGB+Node2Vec & n2v-corr & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
+XGB & XGB & XGB & none & 42 & reb=5 & e677b2c83d8f & legacy\_confi & included \\
 \bottomrule
 \end{tabular}
 }

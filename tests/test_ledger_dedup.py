@@ -68,7 +68,7 @@ def _sample_result(final_value: float):
             "split_val_start": "2016-01-01",
             "split_test_start": "2020-01-01",
             "rebalance_freq": 1,
-            "baseline_version": "price_bh_v2_eqw_v1",
+            "baseline_version": "price_bh_v2_eqw_v2",
             "target_policy_hash": "abc123",
         },
         prediction_rows=2,

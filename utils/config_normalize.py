@@ -192,7 +192,7 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     training_cfg.setdefault("test_start", "2020-01-01")
 
     eval_cfg = cfg.setdefault("evaluation", {})
-    eval_cfg.setdefault("transaction_cost_bps", 5)
+    eval_cfg.setdefault("transaction_cost_bps", 0)
     eval_cfg.setdefault("out_dir", "experiments/")
     eval_cfg.setdefault("results_path", "results/results.jsonl")
     cfg = _normalize_backtest_policies(cfg)

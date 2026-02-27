@@ -1,0 +1,36 @@
+experiment_name: graphlasso_linear
+
+data:
+  price_file: "data/processed/prices.parquet"
+  # Graphical Lasso needs long history; this keeps the run stable and reproducible.
+  start_date: "2010-01-01"
+  end_date: "2024-12-31"
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  min_history: 2500
+  lookback_window: 60
+
+model:
+  family: xgboost
+  type: graphlasso_linear
+
+graphlasso_alpha: 0.01
+graph_smooth_alpha: 0.5
+
+training:
+  val_start: "2016-01-01"
+  test_start: "2020-01-01"
+
+evaluation:
+  top_k: 20
+  transaction_cost_bps: 0
+  risk_free_rate: 0.0
+  backtest_policies: [1, 5]
+  primary_rebalance_freq: 1
+  results_path: "results/results.jsonl"
+  out_dir: "experiments/graphlasso_linear"
+
+experiment:
+  protocol_version: "v1_thesis_core"
+  enforce_protocol: true

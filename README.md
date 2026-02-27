@@ -82,7 +82,7 @@ policy and cached from price data as well.
 Canonical tuned-all report generation:
 
 ```bash
-python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 26
+python scripts/generate_thesis_report.py --results results/results_tuned_all.jsonl --out results/reports/thesis_tuned_all --expected-runs 28
 ```
 
 This generates canonical artifacts:

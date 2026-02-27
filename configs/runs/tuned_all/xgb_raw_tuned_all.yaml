@@ -52,7 +52,7 @@ training:
   test_start: '2020-01-01'
 evaluation:
   top_k: 20
-  transaction_cost_bps: 5
+  transaction_cost_bps: 0
   risk_free_rate: 0.0
   backtest_policies:
   - 1

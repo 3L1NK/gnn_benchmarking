@@ -15,7 +15,7 @@ def _base_cfg():
             "test_start": "2020-01-01",
         },
         "evaluation": {
-            "transaction_cost_bps": 5,
+            "transaction_cost_bps": 0,
             "backtest_policies": [1, 5],
             "primary_rebalance_freq": 1,
         },

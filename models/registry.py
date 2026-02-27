@@ -4,12 +4,14 @@ from typing import Callable, Dict
 
 from trainers.train_gnn import train_gnn
 from trainers.train_lstm import train_lstm
+from trainers.train_mlp import train_mlp
 from trainers.train_xgboost import train_xgboost
 
 
 _FAMILY_REGISTRY: Dict[str, Callable[[dict], None]] = {
     "gnn": train_gnn,
     "lstm": train_lstm,
+    "mlp": train_mlp,
     "xgboost": train_xgboost,
 }
 

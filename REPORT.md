@@ -27,7 +27,7 @@
 ./.venv_gnn/bin/python scripts/generate_thesis_report.py \
   --results results/results_tuned_all.jsonl \
   --out results/reports/thesis_tuned_all \
-  --expected-runs 26
+  --expected-runs 28
 ```
 
 4. Export LaTeX tables:
@@ -43,7 +43,7 @@ make pdf PYTHON=../.venv_gnn/bin/python
 ```
 
 ## Validation Checklist
-- `run_matrix.csv` has exactly 26 rows.
+- `run_matrix.csv` has exactly 28 rows.
 - `master_comparison.csv` has no NaN in `portfolio_sharpe_annualized`, `portfolio_annualized_return`, `portfolio_max_drawdown`, `portfolio_turnover`, `prediction_rank_ic`.
 - `run_key` is unique in `master_comparison.csv`.
 - `ic_vs_sharpe_reb1.png`, `ic_vs_sharpe_reb5.png`, `risk_frontier_reb1.png`, `risk_frontier_reb5.png` show multiple points (for this matrix).

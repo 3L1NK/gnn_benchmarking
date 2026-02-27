@@ -1,0 +1,4 @@
+source_ledger,rows,models,model_families,rebalance_counts,split_test_start,target_horizon
+results/results_tuned_all.jsonl,30,"gat, gcn, graphlasso_linear, lstm, mlp, tgat_static, tgcn_static, xgb_node2vec, xgb_raw","gnn, lstm, mlp, xgboost","{""1"": 15, ""5"": 15}",2020-01-01,1
+results/results.jsonl,28,"gat, gcn, lstm, tgat_static, tgcn_static, xgb_node2vec, xgb_raw","gnn, lstm, xgboost","{""1"": 14, ""5"": 14}",2020-01-01,1
+results/results_retune.jsonl,2,graphlasso_linear,xgboost,"{""1"": 1, ""5"": 1}",2020-01-01,1
