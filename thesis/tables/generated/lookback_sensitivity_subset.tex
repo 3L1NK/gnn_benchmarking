@@ -6,19 +6,19 @@
 \small
 \setlength{\tabcolsep}{4pt}
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{llrlrrrr}
+\begin{tabular}{llllrlrrrr}
 \toprule
-Run & Reb & Lookback & Status & Sharpe & Ann Return & Max DD & Final \\
+Run & Model & Edge & Reb & Lookback & Status & Sharpe & Ann Return & Max DD & Final \\
 \midrule
-XGB+Node2Vec (corr) & reb=5 & 14 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
-XGB+Node2Vec (corr) & reb=5 & 30 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
-XGB+Node2Vec (corr) & reb=5 & 60 & available & 0.8058 & 0.1519 & -0.3284 & 2.0112 \\
-XGB & reb=5 & 14 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
-XGB & reb=5 & 30 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
-XGB & reb=5 & 60 & available & 0.7390 & 0.1349 & -0.3117 & 1.8726 \\
-GAT (corr+sec+gr) & reb=5 & 14 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
-GAT (corr+sec+gr) & reb=5 & 30 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
-GAT (corr+sec+gr) & reb=5 & 60 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
+XGB+Node2Vec (corr) & xgb\_node2vec & node2vec\_correlation & reb=5 & 14 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
+XGB+Node2Vec (corr) & xgb\_node2vec & node2vec\_correlation & reb=5 & 30 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
+XGB+Node2Vec (corr) & xgb\_node2vec & node2vec\_correlation & reb=5 & 60 & available & 2.2831 & 0.2825 & -0.0559 & 1.2906 \\
+XGB & xgb\_raw & none & reb=5 & 14 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
+XGB & xgb\_raw & none & reb=5 & 30 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
+XGB & xgb\_raw & none & reb=5 & 60 & available & 2.2417 & 0.2818 & -0.0490 & 1.2918 \\
+GAT (corr+sec+gr) & gat & corr+sector+granger & reb=5 & 14 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
+GAT (corr+sec+gr) & gat & corr+sector+granger & reb=5 & 30 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
+GAT (corr+sec+gr) & gat & corr+sector+granger & reb=5 & 60 & missing\_rerun\_required & NaN & NaN & NaN & NaN \\
 \bottomrule
 \end{tabular}
 }

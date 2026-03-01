@@ -9,7 +9,7 @@ import yaml
 from .config_aliases import resolve_config_alias
 
 DEFAULT_PROTOCOL_VERSION = "v1_thesis_core"
-DEFAULT_BACKTEST_POLICIES = [1, 5]
+DEFAULT_BACKTEST_POLICIES = [1, 5, 21]
 DEFAULT_PRIMARY_REBALANCE_FREQ = 1
 
 
@@ -193,7 +193,7 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     eval_cfg = cfg.setdefault("evaluation", {})
     eval_cfg.setdefault("transaction_cost_bps", 0)
-    eval_cfg.setdefault("out_dir", "experiments/")
+    eval_cfg.setdefault("out_dir", "results/runs/")
     eval_cfg.setdefault("results_path", "results/results.jsonl")
     cfg = _normalize_backtest_policies(cfg)
 

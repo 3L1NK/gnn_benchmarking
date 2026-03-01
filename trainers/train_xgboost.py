@@ -281,6 +281,11 @@ class XGBoostTrainer:
         # -----------------------
         # 4. Hyperparameter logic
         # -----------------------
+        has_val = int(X_val.shape[0]) > 0
+        if use_tuning and not has_val:
+            print("[xgb_raw] Warning: tuning.enabled=true but validation split is empty; falling back to fixed params.")
+            use_tuning = False
+
         if use_tuning:
             candidates = enumerate_param_candidates(
                 fixed_params=fixed_params,
@@ -350,21 +355,36 @@ class XGBoostTrainer:
             train_group = self._groups_from_dates(self.df["date"].values, train_mask)
             val_group = self._groups_from_dates(self.df["date"].values, val_mask)
             train_group_full = list(train_group) + list(val_group)
-            model.fit(
-                X_train_full,
-                y_train_full,
-                group=train_group_full,
-                eval_set=[(X_val, y_val)],
-                eval_group=[val_group],
-                verbose=50,
-            )
+            if has_val:
+                model.fit(
+                    X_train_full,
+                    y_train_full,
+                    group=train_group_full,
+                    eval_set=[(X_val, y_val)],
+                    eval_group=[val_group],
+                    verbose=50,
+                )
+            else:
+                model.fit(
+                    X_train_full,
+                    y_train_full,
+                    group=train_group_full,
+                    verbose=50,
+                )
         else:
-            model.fit(
-                X_train_full,
-                y_train_full,
-                eval_set=[(X_val, y_val)],
-                verbose=50,
-            )
+            if has_val:
+                model.fit(
+                    X_train_full,
+                    y_train_full,
+                    eval_set=[(X_val, y_val)],
+                    verbose=50,
+                )
+            else:
+                model.fit(
+                    X_train_full,
+                    y_train_full,
+                    verbose=50,
+                )
         train_seconds = time.time() - train_start
 
         infer_start = time.time()
@@ -730,6 +750,11 @@ class XGBoostTrainer:
                     **params,
                 )
 
+        has_val = int(X_val.shape[0]) > 0
+        if use_tuning and not has_val:
+            print("[xgb_node2vec] Warning: tuning.enabled=true but validation split is empty; falling back to fixed params.")
+            use_tuning = False
+
         if use_tuning:
             candidates = enumerate_param_candidates(
                 fixed_params=fixed_params,
@@ -786,11 +811,29 @@ class XGBoostTrainer:
             train_group_full = list(train_group) + list(val_group)
             X_train_full = np.concatenate([X_train, X_val])
             y_train_full = np.concatenate([y_train, y_val])
-            model.fit(X_train_full, y_train_full, group=train_group_full, eval_set=[(X_val, y_val)], eval_group=[val_group], verbose=50)
+            if has_val:
+                model.fit(
+                    X_train_full,
+                    y_train_full,
+                    group=train_group_full,
+                    eval_set=[(X_val, y_val)],
+                    eval_group=[val_group],
+                    verbose=50,
+                )
+            else:
+                model.fit(
+                    X_train_full,
+                    y_train_full,
+                    group=train_group_full,
+                    verbose=50,
+                )
         else:
             X_train_full = np.concatenate([X_train, X_val])
             y_train_full = np.concatenate([y_train, y_val])
-            model.fit(X_train_full, y_train_full, eval_set=[(X_val, y_val)], verbose=50)
+            if has_val:
+                model.fit(X_train_full, y_train_full, eval_set=[(X_val, y_val)], verbose=50)
+            else:
+                model.fit(X_train_full, y_train_full, verbose=50)
         train_seconds = time.time() - train_start
 
         infer_start = time.time()

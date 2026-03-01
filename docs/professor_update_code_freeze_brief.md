@@ -20,6 +20,9 @@
 ## Interpretation for 2020-01-02 to 2024-12-27
 In this window, `Buy and hold (fixed shares)` has annualized Sharpe `1.227` and is unusually strong, consistent with market drift and winner compounding. A model with Sharpe around `0.8` can still be statistically respectable in absolute risk-adjusted terms, yet underperform passive buy-and-hold wealth when the regime strongly rewards holding winners and penalizes rebalance-driven turnover. For this reason, we treat buy-and-hold as contextual and report `active vs equal-weight` plus `market-neutral long-short` diagnostics as the primary evidence of signal usefulness.
 
+## Rolling Walk-Forward Robustness
+We now include rolling walk-forward validation across five test folds (`2020`, `2021`, `2022`, `2023`, `2024`) for the top subset (`xgb_node2vec_corr`, `xgb_raw`, `gat_corr_sector_granger`) at `reb=5`, gross (`0 bps`). This adds year-by-year robustness evidence and fold mean/std statistics, so conclusions are not based on a single 2020-2024 split.
+
 ## Reporting Artifacts
 - Main professor table (baseline + best learned models):
   - `results/reports/thesis_tuned_all/professor_main_results_table.csv`

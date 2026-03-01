@@ -1,0 +1,10 @@
+model_name,edge_type,run_prefix,rebalance_freq,corr_window,status,portfolio_sharpe_annualized,portfolio_annualized_return,portfolio_max_drawdown,portfolio_final_value
+gat,corr,gat_corr_only,5,30,missing_rerun_required,,,,
+gat,corr,gat_corr_only,5,60,missing_rerun_required,,,,
+gat,corr,gat_corr_only,5,120,missing_rerun_required,,,,
+gcn,corr,gcn_corr_only,5,30,missing_rerun_required,,,,
+gcn,corr,gcn_corr_only,5,60,missing_rerun_required,,,,
+gcn,corr,gcn_corr_only,5,120,missing_rerun_required,,,,
+xgb_node2vec,node2vec_correlation,xgb_node2vec_corr,5,30,missing_rerun_required,,,,
+xgb_node2vec,node2vec_correlation,xgb_node2vec_corr,5,60,available,2.283125781794766,0.282461405665729,-0.055918844832723004,1.2905661753161721
+xgb_node2vec,node2vec_correlation,xgb_node2vec_corr,5,120,missing_rerun_required,,,,

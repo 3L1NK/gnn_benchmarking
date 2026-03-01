@@ -649,7 +649,15 @@ def train_gnn(config):
     if not train_snaps:
         raise ValueError("No training snapshots available. Check the date range and lookback window.")
     if not val_snaps:
-        raise ValueError("No validation snapshots available. Adjust 'training.val_start'/'training.test_start'.")
+        # Rolling-CV folds may intentionally set val_start == test_start to enforce
+        # train_end = test_start - 1 day. Keep training data intact and reuse a
+        # small tail slice as a validation proxy for early stopping.
+        fallback_n = max(1, int(round(0.1 * len(train_snaps))))
+        val_snaps = train_snaps[-fallback_n:]
+        print(
+            f"[gnn] Warning: empty validation split; using trailing {fallback_n} "
+            f"training snapshot(s) as validation proxy."
+        )
 
     bs = max(2, config["training"]["batch_size"])
     num_workers = default_num_workers()

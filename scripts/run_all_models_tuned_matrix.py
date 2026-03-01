@@ -239,7 +239,7 @@ def main() -> None:
             "--out",
             args.report_out,
             "--expected-runs",
-            str(len(CORE_MATRIX_CONFIGS) * 2),
+            str(len(CORE_MATRIX_CONFIGS) * 3),
         ]
         print(f"[tuned-all] running {' '.join(report_cmd)}")
         proc = subprocess.run(report_cmd, cwd=REPO_ROOT)

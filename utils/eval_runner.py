@@ -76,8 +76,11 @@ def evaluate_and_report(
     pred_df = sanitize_predictions(pred_df, strict_unique=True)
     pred_stats = prediction_row_stats(pred_df)
 
+    # Persist run id in config so downstream result rows include it.
+    config["_run_id"] = out_dirs.run_id
     protocol = protocol_from_config(config, baseline_version=BASELINE_VERSION)
-    policies = list(protocol.backtest_policies)
+    # Always produce daily/weekly/monthly policy artifacts from the same predictions.
+    policies = sorted({int(p) for p in list(protocol.backtest_policies) + [1, 5, 21] if int(p) >= 1})
     primary_freq = int(protocol.primary_rebalance_freq)
 
     out_dir = out_dirs.canonical
@@ -320,6 +323,34 @@ def evaluate_and_report(
             "daily_metrics_path": str(metrics_path),
         }
 
+        # Canonical per-policy metrics artifact: single source of truth for this run/policy.
+        metrics_json_path = out_dir / f"{run_name}_metrics_reb{int(freq)}.json"
+        metrics_payload = {
+            "run_id": out_dirs.run_id,
+            "run_tag": config.get("experiment_name", run_name),
+            "artifact_prefix": run_name,
+            "rebalance_freq": int(freq),
+            "stats": {
+                "final_value": float(stats.get("final_value", float("nan"))),
+                "cumulative_return": float(stats.get("cumulative_return", float("nan"))),
+                "annualized_return": float(stats.get("annualized_return", float("nan"))),
+                "annualized_volatility": float(stats.get("annualized_volatility", float("nan"))),
+                "max_drawdown": float(stats.get("max_drawdown", float("nan"))),
+                "sharpe": float(stats.get("sharpe", float("nan"))),
+                "sharpe_annualized": float(stats.get("sharpe_annualized", float("nan"))),
+                "sortino_annualized": float(stats.get("sortino_annualized", float("nan"))),
+                "avg_turnover": float(stats.get("avg_turnover", float("nan"))),
+            },
+            "series_paths": {
+                "daily_metrics_csv": str(metrics_path),
+                "equity_curve_csv": str(eq_csv),
+            },
+        }
+        with metrics_json_path.open("w", encoding="utf-8") as f:
+            json.dump(metrics_payload, f, indent=2)
+
+        # Ledger row is built from canonical metrics.json payload.
+        canonical_stats = metrics_payload["stats"]
         result = build_experiment_result(
             config,
             model_name=model_name,
@@ -329,7 +360,7 @@ def evaluate_and_report(
             graph_window=graph_window,
             pred_df=pred_df,
             daily_metrics=metrics,
-            stats=stats,
+            stats=canonical_stats,
             train_seconds=float(train_seconds),
             inference_seconds=float(inference_seconds),
             protocol_fields=protocol.as_result_fields(rebalance_freq=int(freq)),
@@ -338,6 +369,7 @@ def evaluate_and_report(
             run_tag=config.get("experiment_name", run_name),
             out_dir=str(out_dir),
             artifact_prefix=run_name,
+            run_id=out_dirs.run_id,
         )
         save_experiment_result(result, results_path)
 
@@ -377,12 +409,16 @@ def evaluate_and_report(
     run_tag = config.get("experiment_name", run_name)
     with (out_dir / f"{run_tag}_summary.json").open("w") as f:
         json.dump(summary, f, indent=2)
-    if run_tag != run_name:
-        with (out_dir / f"{run_name}_summary.json").open("w") as f:
-            json.dump(summary, f, indent=2)
-
-    if legacy_dir is not None:
-        with (legacy_dir / f"{run_tag}_summary.json").open("w") as f:
-            json.dump(summary, f, indent=2)
+    with (out_dir / f"{run_tag}_metrics.json").open("w") as f:
+        json.dump(
+            {
+                "run_id": out_dirs.run_id,
+                "run_tag": run_tag,
+                "primary_rebalance_freq": int(primary_freq),
+                "stats_by_rebalance_freq": {str(k): v["stats"] for k, v in stats_by_freq.items()},
+            },
+            f,
+            indent=2,
+        )
 
     return summary

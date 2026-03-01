@@ -1,0 +1,63 @@
+experiment_name: xgb_node2vec_corr_rolling_cv_y2020
+data:
+  price_file: data/processed/prices.parquet
+  universe_file: data/processed/universe.csv
+  start_date: '2000-01-01'
+  end_date: '2020-12-31'
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  lookback_window: 60
+  corr_window: 60
+  corr_threshold: 0.4
+model:
+  family: xgboost
+  type: xgb_node2vec
+  embedding_dim: 8
+  graph_mode: correlation
+tuning:
+  enabled: false
+  objective: val_backtest_sharpe_annualized
+  sample_mode: random
+  seed: 42
+  max_trials: 24
+  param_grid:
+    max_depth:
+    - 3
+    - 5
+    - 7
+    learning_rate:
+    - 0.01
+    - 0.03
+    n_estimators:
+    - 400
+    - 600
+    - 800
+    subsample:
+    - 0.7
+    - 0.9
+    colsample_bytree:
+    - 0.7
+    - 0.9
+    reg_lambda:
+    - 0.0
+    - 1.0
+    - 5.0
+  profile: medium
+training:
+  test_start: '2020-01-01'
+  val_start: '2020-01-01'
+evaluation:
+  top_k: 20
+  transaction_cost_bps: 0
+  risk_free_rate: 0.0
+  backtest_policies:
+  - 5
+  primary_rebalance_freq: 5
+  results_path: results/ledger/ledger.jsonl
+  out_dir: results/runs/
+experiment:
+  protocol_version: v1_rolling_cv_subset
+  enforce_protocol: false
+graph: {}
+granger: {}

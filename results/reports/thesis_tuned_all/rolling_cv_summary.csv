@@ -1,0 +1,1 @@
+entry_name,strategy_kind,run_tag,model_name,edge_type,rebalance_freq,fold_year,fold_label,configured_test_start,observed_test_start,observed_test_end,summary_scope,n_folds,portfolio_sharpe_annualized,portfolio_annualized_return,portfolio_max_drawdown,portfolio_turnover

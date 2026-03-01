@@ -1,0 +1,58 @@
+experiment_name: gat_corr_sector_granger_lb60_sensitivity
+data:
+  price_file: data/processed/prices.parquet
+  universe_file: data/processed/universe.csv
+  start_date: '2000-01-01'
+  end_date: '2024-12-31'
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  lookback_window: 60
+  corr_window: 60
+  corr_threshold: 0.4
+  min_history: 250
+graph:
+  use_corr: true
+  use_sector: true
+  use_granger: true
+  make_undirected: false
+  granger_maxlag: 5
+  granger_alpha: 0.01
+  granger_topk: 50
+  granger_top_k: 50
+model:
+  family: gnn
+  type: gat
+  heads: 4
+  input_dim: 32
+  hidden_dim: 128
+  num_layers: 3
+  dropout: 0.1
+training:
+  device: cuda
+  batch_size: 16
+  lr: 0.0005
+  weight_decay: 1e-5
+  max_epochs: 60
+  gradient_clip: 1.0
+  patience: 8
+  val_start: '2016-01-01'
+  test_start: '2020-01-01'
+  num_workers: 4
+loss:
+  type: mse
+evaluation:
+  top_k: 20
+  transaction_cost_bps: 0
+  risk_free_rate: 0.0
+  backtest_policies:
+  - 5
+  primary_rebalance_freq: 5
+  results_path: results/results_lookback_sensitivity.jsonl
+  out_dir: experiments/gat_corr_sector_granger
+experiment:
+  protocol_version: v1_thesis_core
+  enforce_protocol: true
+granger:
+  max_lag: 5
+  p_threshold: 0.01

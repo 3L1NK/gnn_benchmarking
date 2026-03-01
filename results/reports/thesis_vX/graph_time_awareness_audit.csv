@@ -1,0 +1,46 @@
+run_tag,model_name,edge_type,graph_window,max_timestamp_used,split_train_end,max_prediction_date,audit_mode,status,detail
+xgb_node2vec_corr_rolling_cv_y2021,xgb_node2vec,node2vec_correlation,2000-03-29..2020-12-31,2020-12-31,2020-12-31,2021-12-30,frozen_train,pass,window_end=2020-12-31 <= split_train_end=2020-12-31
+gat_corr_sector_granger_rolling_cv_y2021,gat,corr+sector+granger,2000-06-26..2021-12-30,2021-12-30,2020-12-31,2021-12-30,rolling_prediction_time,pass,window_end=2021-12-30 <= max_prediction_date=2021-12-30
+xgb_raw_rolling_cv_y2021,xgb_raw,none,,,2020-12-31,2021-12-30,n/a,pass,non-graph model
+xgb_node2vec_corr_rolling_cv_y2024,xgb_node2vec,node2vec_correlation,2000-03-29..2023-12-29,2023-12-29,2023-12-31,2024-12-27,frozen_train,pass,window_end=2023-12-29 <= split_train_end=2023-12-31
+gat_corr_sector_granger_rolling_cv_y2024,gat,corr+sector+granger,2000-06-26..2024-12-27,2024-12-27,2023-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+xgb_raw_rolling_cv_y2024,xgb_raw,none,,,2023-12-31,2024-12-27,n/a,pass,non-graph model
+gat_corr_sector_granger_rolling_cv_y2023,gat,corr+sector+granger,2000-06-26..2023-12-28,2023-12-28,2022-12-31,2023-12-28,rolling_prediction_time,pass,window_end=2023-12-28 <= max_prediction_date=2023-12-28
+xgb_node2vec_corr_rolling_cv_y2023,xgb_node2vec,node2vec_correlation,2000-03-29..2022-12-30,2022-12-30,2022-12-31,2023-12-28,frozen_train,pass,window_end=2022-12-30 <= split_train_end=2022-12-31
+xgb_raw_rolling_cv_y2023,xgb_raw,none,,,2022-12-31,2023-12-28,n/a,pass,non-graph model
+xgb_node2vec_corr_rolling_cv_y2020,xgb_node2vec,node2vec_correlation,2000-03-29..2019-12-31,2019-12-31,2019-12-31,2020-12-30,frozen_train,pass,window_end=2019-12-31 <= split_train_end=2019-12-31
+xgb_raw_rolling_cv_y2020,xgb_raw,none,,,2019-12-31,2020-12-30,n/a,pass,non-graph model
+gat_corr_sector_granger_rolling_cv_y2020,gat,corr+sector+granger,2000-06-26..2020-12-30,2020-12-30,2019-12-31,2020-12-30,rolling_prediction_time,pass,window_end=2020-12-30 <= max_prediction_date=2020-12-30
+gat_corr_sector_granger_rolling_cv_y2022,gat,corr+sector+granger,2000-06-26..2022-12-29,2022-12-29,2021-12-31,2022-12-29,rolling_prediction_time,pass,window_end=2022-12-29 <= max_prediction_date=2022-12-29
+xgb_raw_rolling_cv_y2022,xgb_raw,none,,,2021-12-31,2022-12-29,n/a,pass,non-graph model
+xgb_node2vec_corr_rolling_cv_y2022,xgb_node2vec,node2vec_correlation,2000-03-29..2021-12-31,2021-12-31,2021-12-31,2022-12-29,frozen_train,pass,window_end=2021-12-31 <= split_train_end=2021-12-31
+gat_corr_sector_granger_rolling_cv_y2021,gat,corr+sector+granger,2000-06-26..2021-12-30,2021-12-30,2020-12-31,2021-12-30,rolling_prediction_time,pass,window_end=2021-12-30 <= max_prediction_date=2021-12-30
+xgb_node2vec_corr_rolling_cv_y2021,xgb_node2vec,node2vec_correlation,2000-03-29..2020-12-31,2020-12-31,2020-12-31,2021-12-30,frozen_train,pass,window_end=2020-12-31 <= split_train_end=2020-12-31
+xgb_raw_rolling_cv_y2021,xgb_raw,none,,,2020-12-31,2021-12-30,n/a,pass,non-graph model
+xgb_raw_rolling_cv_y2024,xgb_raw,none,,,2023-12-31,2024-12-27,n/a,pass,non-graph model
+xgb_node2vec_corr_rolling_cv_y2024,xgb_node2vec,node2vec_correlation,2000-03-29..2023-12-29,2023-12-29,2023-12-31,2024-12-27,frozen_train,pass,window_end=2023-12-29 <= split_train_end=2023-12-31
+gat_corr_sector_granger_rolling_cv_y2024,gat,corr+sector+granger,2000-06-26..2024-12-27,2024-12-27,2023-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+xgb_raw_rolling_cv_y2023,xgb_raw,none,,,2022-12-31,2023-12-28,n/a,pass,non-graph model
+xgb_node2vec_corr_rolling_cv_y2023,xgb_node2vec,node2vec_correlation,2000-03-29..2022-12-30,2022-12-30,2022-12-31,2023-12-28,frozen_train,pass,window_end=2022-12-30 <= split_train_end=2022-12-31
+gat_corr_sector_granger_rolling_cv_y2023,gat,corr+sector+granger,2000-06-26..2023-12-28,2023-12-28,2022-12-31,2023-12-28,rolling_prediction_time,pass,window_end=2023-12-28 <= max_prediction_date=2023-12-28
+gat_corr_sector_granger_rolling_cv_y2020,gat,corr+sector+granger,2000-06-26..2020-12-30,2020-12-30,2019-12-31,2020-12-30,rolling_prediction_time,pass,window_end=2020-12-30 <= max_prediction_date=2020-12-30
+xgb_raw_rolling_cv_y2020,xgb_raw,none,,,2019-12-31,2020-12-30,n/a,pass,non-graph model
+xgb_node2vec_corr_rolling_cv_y2020,xgb_node2vec,node2vec_correlation,2000-03-29..2019-12-31,2019-12-31,2019-12-31,2020-12-30,frozen_train,pass,window_end=2019-12-31 <= split_train_end=2019-12-31
+gat_corr_sector_granger_rolling_cv_y2022,gat,corr+sector+granger,2000-06-26..2022-12-29,2022-12-29,2021-12-31,2022-12-29,rolling_prediction_time,pass,window_end=2022-12-29 <= max_prediction_date=2022-12-29
+xgb_node2vec_corr_rolling_cv_y2022,xgb_node2vec,node2vec_correlation,2000-03-29..2021-12-31,2021-12-31,2021-12-31,2022-12-29,frozen_train,pass,window_end=2021-12-31 <= split_train_end=2021-12-31
+xgb_raw_rolling_cv_y2022,xgb_raw,none,,,2021-12-31,2022-12-29,n/a,pass,non-graph model
+gat_corr_sector_granger_rolling_cv_y2024,gat,corr+sector+granger,2000-06-26..2024-12-27,2024-12-27,2023-12-31,2024-12-27,rolling_prediction_time,pass,window_end=2024-12-27 <= max_prediction_date=2024-12-27
+xgb_raw_rolling_cv_y2021,xgb_raw,none,,,2020-12-31,2021-12-30,n/a,pass,non-graph model
+gat_corr_sector_granger_rolling_cv_y2021,gat,corr+sector+granger,2000-06-26..2021-12-30,2021-12-30,2020-12-31,2021-12-30,rolling_prediction_time,pass,window_end=2021-12-30 <= max_prediction_date=2021-12-30
+xgb_node2vec_corr_rolling_cv_y2024,xgb_node2vec,node2vec_correlation,2000-03-29..2023-12-29,2023-12-29,2023-12-31,2024-12-27,frozen_train,pass,window_end=2023-12-29 <= split_train_end=2023-12-31
+xgb_node2vec_corr_rolling_cv_y2021,xgb_node2vec,node2vec_correlation,2000-03-29..2020-12-31,2020-12-31,2020-12-31,2021-12-30,frozen_train,pass,window_end=2020-12-31 <= split_train_end=2020-12-31
+xgb_raw_rolling_cv_y2024,xgb_raw,none,,,2023-12-31,2024-12-27,n/a,pass,non-graph model
+gat_corr_sector_granger_rolling_cv_y2023,gat,corr+sector+granger,2000-06-26..2023-12-28,2023-12-28,2022-12-31,2023-12-28,rolling_prediction_time,pass,window_end=2023-12-28 <= max_prediction_date=2023-12-28
+xgb_raw_rolling_cv_y2023,xgb_raw,none,,,2022-12-31,2023-12-28,n/a,pass,non-graph model
+xgb_node2vec_corr_rolling_cv_y2023,xgb_node2vec,node2vec_correlation,2000-03-29..2022-12-30,2022-12-30,2022-12-31,2023-12-28,frozen_train,pass,window_end=2022-12-30 <= split_train_end=2022-12-31
+gat_corr_sector_granger_rolling_cv_y2020,gat,corr+sector+granger,2000-06-26..2020-12-30,2020-12-30,2019-12-31,2020-12-30,rolling_prediction_time,pass,window_end=2020-12-30 <= max_prediction_date=2020-12-30
+xgb_node2vec_corr_rolling_cv_y2020,xgb_node2vec,node2vec_correlation,2000-03-29..2019-12-31,2019-12-31,2019-12-31,2020-12-30,frozen_train,pass,window_end=2019-12-31 <= split_train_end=2019-12-31
+xgb_raw_rolling_cv_y2020,xgb_raw,none,,,2019-12-31,2020-12-30,n/a,pass,non-graph model
+xgb_raw_rolling_cv_y2022,xgb_raw,none,,,2021-12-31,2022-12-29,n/a,pass,non-graph model
+xgb_node2vec_corr_rolling_cv_y2022,xgb_node2vec,node2vec_correlation,2000-03-29..2021-12-31,2021-12-31,2021-12-31,2022-12-29,frozen_train,pass,window_end=2021-12-31 <= split_train_end=2021-12-31
+gat_corr_sector_granger_rolling_cv_y2022,gat,corr+sector+granger,2000-06-26..2022-12-29,2022-12-29,2021-12-31,2022-12-29,rolling_prediction_time,pass,window_end=2022-12-29 <= max_prediction_date=2022-12-29

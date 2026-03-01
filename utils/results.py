@@ -13,6 +13,7 @@ from .metrics import rank_ic
 
 
 RESULT_FIELDS = [
+    "run_id",
     "experiment_id",
     "timestamp",
     "seed",
@@ -23,6 +24,7 @@ RESULT_FIELDS = [
     "graph_window",
     "target_type",
     "target_horizon",
+    "corr_window",
     "lookback_window",
     "protocol_version",
     "split_train_end",
@@ -198,6 +200,7 @@ def build_experiment_result(
     run_tag: Optional[str] = None,
     out_dir: Optional[str] = None,
     artifact_prefix: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> dict:
     pm = prediction_metrics(pred_df, daily_metrics)
     data_cfg = config.get("data", {})
@@ -213,6 +216,7 @@ def build_experiment_result(
         sharpe_annualized = float(sharpe_daily * np.sqrt(252.0))
 
     result = {
+        "run_id": str(run_id or config.get("_run_id", "")),
         "experiment_id": f"{run_tag}_{int(time.time())}{rebalance_for_id}",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
         "seed": seed,
@@ -226,6 +230,7 @@ def build_experiment_result(
         "graph_window": graph_window,
         "target_type": data_cfg.get("target_type", ""),
         "target_horizon": int(data_cfg.get("target_horizon", 0)) if data_cfg.get("target_horizon") is not None else 0,
+        "corr_window": int(data_cfg.get("corr_window", 0)) if data_cfg.get("corr_window") is not None else 0,
         "lookback_window": int(data_cfg.get("lookback_window", 0)) if data_cfg.get("lookback_window") is not None else 0,
         "protocol_version": "",
         "split_train_end": "",

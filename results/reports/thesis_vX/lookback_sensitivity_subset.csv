@@ -1,0 +1,10 @@
+run_prefix,model_name,edge_type,rebalance_freq,lookback_window,status,portfolio_sharpe_annualized,portfolio_annualized_return,portfolio_max_drawdown,portfolio_final_value
+xgb_node2vec_corr,xgb_node2vec,node2vec_correlation,5,14,missing_rerun_required,,,,
+xgb_node2vec_corr,xgb_node2vec,node2vec_correlation,5,30,missing_rerun_required,,,,
+xgb_node2vec_corr,xgb_node2vec,node2vec_correlation,5,60,available,2.283125781794766,0.282461405665729,-0.055918844832723004,1.2905661753161721
+xgb_raw,xgb_raw,none,5,14,missing_rerun_required,,,,
+xgb_raw,xgb_raw,none,5,30,missing_rerun_required,,,,
+xgb_raw,xgb_raw,none,5,60,available,2.2416727778850802,0.28182087797603,-0.049038529662256004,1.29181928634921
+gat_corr_sector_granger,gat,corr+sector+granger,5,14,missing_rerun_required,,,,
+gat_corr_sector_granger,gat,corr+sector+granger,5,30,missing_rerun_required,,,,
+gat_corr_sector_granger,gat,corr+sector+granger,5,60,missing_rerun_required,,,,

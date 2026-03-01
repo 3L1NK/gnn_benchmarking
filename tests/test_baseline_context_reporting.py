@@ -156,7 +156,7 @@ def test_summary_includes_global_and_test_baseline_context(tmp_path, monkeypatch
         },
     }
 
-    out_dirs = OutputDirs(canonical=tmp_path / "exp", legacy=None)
+    out_dirs = OutputDirs(canonical=tmp_path / "exp", legacy=None, run_id="test-run", root=tmp_path / "exp")
     out_dirs.canonical.mkdir(parents=True, exist_ok=True)
     summary = eval_runner.evaluate_and_report(
         config=config,

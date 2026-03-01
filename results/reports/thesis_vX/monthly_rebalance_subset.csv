@@ -1,0 +1,7 @@
+strategy_name,strategy_kind,strategy_label,rebalance_freq,rebalance_label,cost_bps,cost_label,portfolio_final_value,portfolio_annualized_return,portfolio_sharpe_annualized,portfolio_max_drawdown,portfolio_turnover,n_points,detail
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,"Equal weight (rebalanced, all assets)",1,reb=1,0,gross (0 bps),1.970375733881335,0.1456459028053898,0.7951391479117678,-0.3112345749237915,0.011456213809865771,1257,
+Buy and hold (fixed shares),baseline_buy_and_hold,Buy and hold (fixed shares),1,reb=1,0,gross (0 bps),2.3934426493378154,0.1913682475207965,0.9505178128901963,-0.2986234113856566,0.0,1257,
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,"Equal weight (rebalanced, all assets)",5,reb=5,0,gross (0 bps),1.9531761037796667,0.14363400210670663,0.7885594715217774,-0.3136352988773329,0.005672521709745417,1257,
+Buy and hold (fixed shares),baseline_buy_and_hold,Buy and hold (fixed shares),5,reb=5,0,gross (0 bps),2.3934426493378154,0.1913682475207965,0.9505178128901963,-0.2986234113856566,0.0,1257,
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,"Equal weight (rebalanced, all assets)",21,reb=21,0,gross (0 bps),1.9520769337996753,0.14350494750233445,0.794127329821291,-0.3095585835922766,0.0032657369061045403,1257,
+Buy and hold (fixed shares),baseline_buy_and_hold,Buy and hold (fixed shares),21,reb=21,0,gross (0 bps),2.3934426493378154,0.1913682475207965,0.9505178128901963,-0.2986234113856566,0.0,1257,

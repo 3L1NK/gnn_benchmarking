@@ -1,6 +1,7 @@
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from typing import Optional
 
 from utils.cache import cache_key, cache_path, cache_load, cache_save, cache_dir
 from utils.data_loading import load_price_panel
@@ -8,8 +9,9 @@ from utils.metrics import portfolio_metrics
 
 
 BASELINE_VERSION = "price_bh_v2_eqw_v2"
-GLOBAL_BASELINE_CSV = Path("data/processed/baselines/buy_and_hold_global.csv")
-GLOBAL_EQUAL_WEIGHT_CSV = Path("data/processed/baselines/equal_weight_global.csv")
+BASELINE_ROOT = Path("results/runs/baselines")
+GLOBAL_BASELINE_CSV = BASELINE_ROOT / "buy_and_hold_global.csv"
+GLOBAL_EQUAL_WEIGHT_CSV = BASELINE_ROOT / "equal_weight_global.csv"
 
 
 def clear_buy_and_hold_cache():
@@ -136,6 +138,53 @@ def slice_and_rebase_equity_curve(eq_series: pd.Series, start_date=None, end_dat
     return s
 
 
+def _window_key(start_date, end_date) -> str:
+    s = pd.to_datetime(start_date).date() if start_date is not None else "na"
+    e = pd.to_datetime(end_date).date() if end_date is not None else "na"
+    return f"{s}__{e}"
+
+
+def _window_baseline_paths(start_date, end_date, *, rebalance_freq: Optional[int] = None):
+    BASELINE_ROOT.mkdir(parents=True, exist_ok=True)
+    d = BASELINE_ROOT / f"window_{_window_key(start_date, end_date)}"
+    d.mkdir(parents=True, exist_ok=True)
+    if rebalance_freq is None:
+        curve = d / "buy_and_hold.csv"
+        stats = d / "buy_and_hold_stats.json"
+    else:
+        curve = d / f"equal_weight_reb{int(rebalance_freq)}.csv"
+        stats = d / f"equal_weight_reb{int(rebalance_freq)}_stats.json"
+    return curve, stats
+
+
+def _load_cached_window_baseline(curve_path: Path, stats_path: Path):
+    if not curve_path.exists() or not stats_path.exists():
+        return None
+    try:
+        curve_df = pd.read_csv(curve_path)
+        if "date" not in curve_df.columns:
+            return None
+        value_cols = [c for c in curve_df.columns if c != "date"]
+        if not value_cols:
+            return None
+        col = value_cols[0]
+        series = pd.Series(
+            pd.to_numeric(curve_df[col], errors="coerce").values,
+            index=pd.to_datetime(curve_df["date"], errors="coerce"),
+            name=col,
+        ).dropna()
+        stats = pd.read_json(stats_path, typ="series").to_dict()
+        daily_ret = series.pct_change().dropna().values
+        return series, daily_ret, stats
+    except Exception:
+        return None
+
+
+def _save_cached_window_baseline(eq_series: pd.Series, stats: dict, curve_path: Path, stats_path: Path, value_col: str):
+    write_baseline_curve_csv(eq_series, curve_path, value_column=value_col)
+    pd.Series(stats).to_json(stats_path)
+
+
 def write_buy_and_hold_csv(eq_series: pd.Series, out_path: Path):
     write_baseline_curve_csv(eq_series, out_path, value_column="buy_and_hold")
 
@@ -152,11 +201,17 @@ def write_baseline_curve_csv(eq_series: pd.Series, out_path: Path, value_column:
 
 def get_buy_and_hold_for_window(config, start_date, end_date, rebuild=False, eq_full=None):
     risk_free = config["evaluation"].get("risk_free_rate", 0.0)
+    curve_path, stats_path = _window_baseline_paths(start_date, end_date, rebalance_freq=None)
+    if not rebuild:
+        cached = _load_cached_window_baseline(curve_path, stats_path)
+        if cached is not None:
+            return cached
     if eq_full is None:
         eq_full, _, _ = get_global_buy_and_hold(config, rebuild=rebuild)
     eq_window = slice_and_rebase_equity_curve(eq_full, start_date, end_date, rebase=True)
     daily_ret = eq_window.pct_change().dropna().values
     stats = portfolio_metrics(eq_window, daily_ret, risk_free)
+    _save_cached_window_baseline(eq_window, stats, curve_path, stats_path, value_col="buy_and_hold")
     return eq_window, daily_ret, stats
 
 
@@ -301,6 +356,11 @@ def get_global_equal_weight(config, rebalance_freq=1, rebuild=False, align_start
 
 def get_equal_weight_for_window(config, start_date, end_date, rebalance_freq=1, rebuild=False, eq_full=None):
     risk_free = config["evaluation"].get("risk_free_rate", 0.0)
+    curve_path, stats_path = _window_baseline_paths(start_date, end_date, rebalance_freq=int(rebalance_freq))
+    if not rebuild:
+        cached = _load_cached_window_baseline(curve_path, stats_path)
+        if cached is not None:
+            return cached
     if eq_full is None:
         eq_full, _, _ = get_global_equal_weight(
             config,
@@ -310,6 +370,7 @@ def get_equal_weight_for_window(config, start_date, end_date, rebalance_freq=1, 
     eq_window = slice_and_rebase_equity_curve(eq_full, start_date, end_date, rebase=True)
     daily_ret = eq_window.pct_change().dropna().values
     stats = portfolio_metrics(eq_window, daily_ret, risk_free)
+    _save_cached_window_baseline(eq_window, stats, curve_path, stats_path, value_col="equal_weight")
     return eq_window, daily_ret, stats
 
 

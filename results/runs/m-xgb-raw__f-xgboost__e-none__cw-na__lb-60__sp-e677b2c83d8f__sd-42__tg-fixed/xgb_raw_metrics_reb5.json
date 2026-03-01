@@ -1,0 +1,21 @@
+{
+  "run_id": "m-xgb-raw__f-xgboost__e-none__cw-na__lb-60__sp-e677b2c83d8f__sd-42__tg-fixed",
+  "run_tag": "xgb_raw",
+  "artifact_prefix": "xgb_raw",
+  "rebalance_freq": 5,
+  "stats": {
+    "final_value": 2.000790782392999,
+    "cumulative_return": 1.0084049120687193,
+    "annualized_return": 0.15017296144422487,
+    "annualized_volatility": 0.20616399856276627,
+    "max_drawdown": -0.3300783823100909,
+    "sharpe": 0.04904469739978496,
+    "sharpe_annualized": 0.7785610341644853,
+    "sortino_annualized": 0.9224614584507738,
+    "avg_turnover": 0.1392515923566879
+  },
+  "series_paths": {
+    "daily_metrics_csv": "results/runs/m-xgb-raw__f-xgboost__e-none__cw-na__lb-60__sp-e677b2c83d8f__sd-42__tg-fixed/xgb_raw_daily_metrics_reb5.csv",
+    "equity_curve_csv": "results/runs/m-xgb-raw__f-xgboost__e-none__cw-na__lb-60__sp-e677b2c83d8f__sd-42__tg-fixed/xgb_raw_equity_curve_reb5.csv"
+  }
+}

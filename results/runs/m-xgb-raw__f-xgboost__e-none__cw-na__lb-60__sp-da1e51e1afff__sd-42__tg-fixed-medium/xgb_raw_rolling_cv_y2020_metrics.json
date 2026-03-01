@@ -1,0 +1,43 @@
+{
+  "run_id": "m-xgb-raw__f-xgboost__e-none__cw-na__lb-60__sp-da1e51e1afff__sd-42__tg-fixed-medium",
+  "run_tag": "xgb_raw_rolling_cv_y2020",
+  "primary_rebalance_freq": 5,
+  "stats_by_rebalance_freq": {
+    "1": {
+      "final_value": 1.319272642542589,
+      "cumulative_return": 0.3267311726448905,
+      "annualized_return": 0.3267311726448905,
+      "annualized_volatility": 0.344879639769614,
+      "max_drawdown": -0.3170240414590161,
+      "sharpe": 0.06145810459700096,
+      "sortino": 0.06991054637176274,
+      "sharpe_annualized": 0.9756176139463995,
+      "sortino_annualized": 1.1097955183219987,
+      "avg_turnover": 0.5503968253968253
+    },
+    "5": {
+      "final_value": 1.180748028738288,
+      "cumulative_return": 0.18742340760357323,
+      "annualized_return": 0.18742340760357323,
+      "annualized_volatility": 0.34985395247645634,
+      "max_drawdown": -0.30456683594081746,
+      "sharpe": 0.04097008741128081,
+      "sortino": 0.04576281846884449,
+      "sharpe_annualized": 0.6503802700047341,
+      "sortino_annualized": 0.726462221771737,
+      "avg_turnover": 0.1416666666666667
+    },
+    "21": {
+      "final_value": 1.1637576014576227,
+      "cumulative_return": 0.17033692465614325,
+      "annualized_return": 0.17033692465614325,
+      "annualized_volatility": 0.3003136146433514,
+      "max_drawdown": -0.2884099027637599,
+      "sharpe": 0.04127448311447296,
+      "sortino": 0.048371040198876426,
+      "sharpe_annualized": 0.6552124532253777,
+      "sortino_annualized": 0.767866458142412,
+      "avg_turnover": 0.03214285714285715
+    }
+  }
+}

@@ -1,0 +1,66 @@
+experiment_name: xgb_raw_rolling_cv_y2021
+data:
+  price_file: data/processed/prices.parquet
+  start_date: '2000-01-01'
+  end_date: '2021-12-31'
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  lookback_window: 60
+tuning:
+  enabled: false
+  objective: val_backtest_sharpe_annualized
+  sample_mode: random
+  seed: 42
+  max_trials: 24
+  param_grid:
+    max_depth:
+    - 3
+    - 5
+    - 7
+    learning_rate:
+    - 0.01
+    - 0.03
+    - 0.05
+    n_estimators:
+    - 200
+    - 400
+    - 600
+    subsample:
+    - 0.7
+    - 0.9
+    colsample_bytree:
+    - 0.7
+    - 0.9
+    reg_lambda:
+    - 0.0
+    - 1.0
+    - 5.0
+  profile: medium
+model:
+  family: xgboost
+  type: xgb_raw
+  params:
+    max_depth: 8
+    learning_rate: 0.01
+    n_estimators: 100
+    subsample: 0.7
+    colsample_bytree: 0.9
+    reg_lambda: 0.0
+training:
+  val_start: '2021-01-01'
+  test_start: '2021-01-01'
+evaluation:
+  top_k: 20
+  transaction_cost_bps: 0
+  risk_free_rate: 0.0
+  backtest_policies:
+  - 5
+  primary_rebalance_freq: 5
+  results_path: results/ledger/ledger.jsonl
+  out_dir: results/runs/
+experiment:
+  protocol_version: v1_rolling_cv_subset
+  enforce_protocol: false
+graph: {}
+granger: {}

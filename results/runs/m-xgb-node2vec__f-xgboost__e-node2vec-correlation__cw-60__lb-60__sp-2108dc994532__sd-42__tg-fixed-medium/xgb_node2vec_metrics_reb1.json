@@ -1,0 +1,21 @@
+{
+  "run_id": "m-xgb-node2vec__f-xgboost__e-node2vec-correlation__cw-60__lb-60__sp-2108dc994532__sd-42__tg-fixed-medium",
+  "run_tag": "xgb_node2vec_corr_rolling_cv_y2023",
+  "artifact_prefix": "xgb_node2vec",
+  "rebalance_freq": 1,
+  "stats": {
+    "final_value": 1.2134255806700438,
+    "cumulative_return": 0.20468805397574275,
+    "annualized_return": 0.20739395342076938,
+    "annualized_volatility": 0.1229767381046324,
+    "max_drawdown": -0.09751348578150609,
+    "sharpe": 0.10418312241561183,
+    "sharpe_annualized": 1.6538579312186823,
+    "sortino_annualized": 2.5735309996431512,
+    "avg_turnover": 0.5991967871485944
+  },
+  "series_paths": {
+    "daily_metrics_csv": "results/runs/m-xgb-node2vec__f-xgboost__e-node2vec-correlation__cw-60__lb-60__sp-2108dc994532__sd-42__tg-fixed-medium/xgb_node2vec_daily_metrics_reb1.csv",
+    "equity_curve_csv": "results/runs/m-xgb-node2vec__f-xgboost__e-node2vec-correlation__cw-60__lb-60__sp-2108dc994532__sd-42__tg-fixed-medium/xgb_node2vec_equity_curve_reb1.csv"
+  }
+}

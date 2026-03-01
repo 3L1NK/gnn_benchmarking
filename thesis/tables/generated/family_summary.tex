@@ -10,14 +10,15 @@
 \toprule
 Category & Rebalance & Model & Rank IC & Sharpe & Final \\
 \midrule
-Graph-feature & reb=1 & XGB+Node2Vec (corr) & 0.0160 & 0.6602 & 1.7477 \\
-Non-graph & reb=1 & LSTM & -0.0010 & 0.5323 & 1.5743 \\
-Static GNN & reb=1 & GCN (sector) & 0.0058 & 0.6061 & 1.6848 \\
-Static temporal & reb=1 & TGAT-static (corr) & 0.0037 & 0.5055 & 1.5485 \\
-Graph-feature & reb=5 & XGB+Node2Vec (corr) & 0.0160 & 0.8058 & 2.0112 \\
-Non-graph & reb=5 & XGB & 0.0043 & 0.7390 & 1.8726 \\
-Static GNN & reb=5 & GAT (corr+sec+gr) & -0.0077 & 0.7030 & 1.8531 \\
-Static temporal & reb=5 & TGAT-static (corr) & 0.0037 & 0.6923 & 1.9014 \\
+Graph-feature & reb=1 & xgb-node2vec-corr-rolling-cv-y2021 & 0.0013 & 2.4224 & 1.3176 \\
+Non-graph & reb=1 & xgb-raw-rolling-cv-y2021 & 0.0010 & 2.3078 & 1.3068 \\
+Static GNN & reb=1 & GAT (corr+sector+granger+rolling+cv+y2021) & -0.0125 & 2.3337 & 1.3252 \\
+Graph-feature & reb=5 & xgb-node2vec-corr-rolling-cv-y2021 & 0.0013 & 2.2831 & 1.2906 \\
+Non-graph & reb=5 & xgb-raw-rolling-cv-y2021 & 0.0010 & 2.2417 & 1.2918 \\
+Static GNN & reb=5 & GAT (corr+sector+granger+rolling+cv+y2021) & -0.0125 & 2.4386 & 1.3376 \\
+Graph-feature & reb=21 & xgb-node2vec-corr-rolling-cv-y2024 & 0.0127 & 2.0107 & 1.2392 \\
+Non-graph & reb=21 & xgb-raw-rolling-cv-y2021 & 0.0010 & 2.1428 & 1.2724 \\
+Static GNN & reb=21 & GAT (corr+sector+granger+rolling+cv+y2024) & 0.0060 & 2.3045 & 1.2958 \\
 \bottomrule
 \end{tabular}
 }

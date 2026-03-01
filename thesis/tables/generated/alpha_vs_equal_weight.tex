@@ -10,22 +10,30 @@
 \toprule
 Run & Reb & Active Return & Tracking Error & IR & Rel Final & Rel Max DD \\
 \midrule
-mlp & reb=1 & 0.0261 & 0.3095 & 0.0844 & 1.1174 & -0.1760 \\
-XGB+Node2Vec (corr) & reb=1 & -0.0236 & 0.3043 & -0.0775 & 0.8796 & -0.2312 \\
-GCN (sector) & reb=1 & -0.0284 & 0.3110 & -0.0914 & 0.8480 & -0.2532 \\
-GAT (corr) & reb=1 & -0.0332 & 0.3182 & -0.1042 & 0.8209 & -0.2511 \\
-LSTM & reb=1 & -0.0408 & 0.3157 & -0.1293 & 0.7924 & -0.2674 \\
-TGAT-static (corr) & reb=1 & -0.0433 & 0.3210 & -0.1349 & 0.7794 & -0.3143 \\
-GAT (granger) & reb=1 & -0.0485 & 0.3148 & -0.1539 & 0.7645 & -0.3014 \\
-GCN (granger) & reb=1 & -0.0464 & 0.3009 & -0.1541 & 0.7874 & -0.3123 \\
-mlp & reb=5 & 0.0184 & 0.3168 & 0.0582 & 1.0661 & -0.2042 \\
-XGB+Node2Vec (corr) & reb=5 & 0.0064 & 0.3032 & 0.0210 & 1.0211 & -0.1946 \\
-TGAT-static (corr) & reb=5 & -0.0003 & 0.3210 & -0.0008 & 0.9654 & -0.1975 \\
-LSTM & reb=5 & -0.0016 & 0.3115 & -0.0053 & 0.9651 & -0.1858 \\
-GCN (sector) & reb=5 & -0.0053 & 0.3160 & -0.0169 & 0.9454 & -0.2020 \\
-GAT (corr+sec+gr) & reb=5 & -0.0084 & 0.3078 & -0.0273 & 0.9409 & -0.1939 \\
-XGB & reb=5 & -0.0089 & 0.3034 & -0.0295 & 0.9508 & -0.1949 \\
-GAT (sector) & reb=5 & -0.0103 & 0.3156 & -0.0326 & 0.9229 & -0.2038 \\
+GAT (corr+sector+granger+rolling+cv+y2022) & reb=1 & 0.1066 & 0.2983 & 0.3572 & 1.1193 & -0.0745 \\
+xgb-raw-rolling-cv-y2020 & reb=1 & 0.1410 & 0.5531 & 0.2550 & 1.1377 & -0.1778 \\
+xgb-node2vec-corr-rolling-cv-y2020 & reb=1 & 0.1308 & 0.5394 & 0.2425 & 1.1295 & -0.1716 \\
+GAT (corr+sector+granger+rolling+cv+y2024) & reb=1 & 0.0260 & 0.1528 & 0.1703 & 1.0203 & -0.0590 \\
+xgb-raw-rolling-cv-y2022 & reb=1 & 0.0515 & 0.3028 & 0.1700 & 1.0550 & -0.0810 \\
+GAT (corr+sector+granger+rolling+cv+y2023) & reb=1 & 0.0215 & 0.1656 & 0.1296 & 1.0245 & -0.0409 \\
+xgb-node2vec-corr-rolling-cv-y2024 & reb=1 & 0.0136 & 0.1452 & 0.0939 & 1.0050 & -0.0597 \\
+GAT (corr+sector+granger+rolling+cv+y2020) & reb=1 & 0.0086 & 0.5779 & 0.0148 & 0.9853 & -0.2025 \\
+GAT (corr+sector+granger+rolling+cv+y2020) & reb=5 & 0.0712 & 0.5651 & 0.1260 & 1.0517 & -0.1946 \\
+xgb-node2vec-corr-rolling-cv-y2022 & reb=5 & 0.0340 & 0.3002 & 0.1132 & 1.0367 & -0.0784 \\
+GAT (corr+sector+granger+rolling+cv+y2022) & reb=5 & 0.0311 & 0.2944 & 0.1057 & 1.0394 & -0.0746 \\
+xgb-raw-rolling-cv-y2020 & reb=5 & 0.0427 & 0.5581 & 0.0764 & 1.0287 & -0.2001 \\
+xgb-raw-rolling-cv-y2022 & reb=5 & 0.0221 & 0.3033 & 0.0728 & 1.0252 & -0.0853 \\
+xgb-raw-rolling-cv-y2023 & reb=5 & 0.0101 & 0.1623 & 0.0622 & 1.0128 & -0.0555 \\
+xgb-node2vec-corr-rolling-cv-y2020 & reb=5 & 0.0193 & 0.5495 & 0.0351 & 1.0061 & -0.1972 \\
+GAT (corr+sector+granger+rolling+cv+y2021) & reb=5 & 0.0006 & 0.1693 & 0.0037 & 1.0097 & -0.0619 \\
+GAT (corr+sector+granger+rolling+cv+y2020) & reb=21 & 0.1462 & 0.5289 & 0.2764 & 1.1424 & -0.1693 \\
+GAT (corr+sector+granger+rolling+cv+y2024) & reb=21 & 0.0377 & 0.1520 & 0.2479 & 1.0321 & -0.0528 \\
+xgb-raw-rolling-cv-y2022 & reb=21 & 0.0388 & 0.2955 & 0.1314 & 1.0423 & -0.1019 \\
+xgb-node2vec-corr-rolling-cv-y2020 & reb=21 & 0.0568 & 0.5069 & 0.1120 & 1.0566 & -0.1690 \\
+xgb-node2vec-corr-rolling-cv-y2022 & reb=21 & 0.0227 & 0.3015 & 0.0753 & 1.0231 & -0.0693 \\
+xgb-raw-rolling-cv-y2020 & reb=21 & 0.0188 & 0.5047 & 0.0372 & 1.0194 & -0.1654 \\
+GAT (corr+sector+granger+rolling+cv+y2022) & reb=21 & 0.0017 & 0.3012 & 0.0056 & 1.0080 & -0.1085 \\
+xgb-node2vec-corr-rolling-cv-y2024 & reb=21 & -0.0040 & 0.1482 & -0.0273 & 0.9870 & -0.0555 \\
 \bottomrule
 \end{tabular}
 }

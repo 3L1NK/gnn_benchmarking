@@ -1,0 +1,4 @@
+rebalance_freq,source_run_tag,global_start_date,global_end_date,global_final_value,test_start_date,test_end_date,test_final_value,test_rebased
+1,xgb_node2vec_corr_rolling_cv_y2021,2000-03-29,2021-12-31,22.57056908209604,2021-01-04,2021-12-30,1.501186039472033,True
+5,gat_corr_sector_granger_rolling_cv_y2021,2000-03-29,2021-12-31,22.57056908209604,2021-01-04,2021-12-30,1.5011860395,True
+21,gat_corr_sector_granger_rolling_cv_y2024,2000-03-29,2024-12-30,51.17842005745584,2024-01-02,2024-12-27,1.9075730534,True

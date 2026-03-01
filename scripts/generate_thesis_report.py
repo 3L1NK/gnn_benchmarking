@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -1204,13 +1205,32 @@ def _write_monthly_rebalance_subset(master: pd.DataFrame, out_dir: Path) -> pd.D
         if pred_df is None or pred_df.empty:
             continue
         for reb in [1, 5, 21]:
-            eq, _, stats = backtest_long_only(
-                pred_df,
-                top_k=20,
-                transaction_cost_bps=0.0,
-                risk_free_rate=0.0,
-                rebalance_freq=int(reb),
-            )
+            # Reuse canonical run metrics when available; only recompute missing policies.
+            stats = None
+            n_points = 0
+            canonical = master[
+                (master["run_tag"] == _safe_str(row.get("run_tag", "")))
+                & (pd.to_numeric(master["rebalance_freq"], errors="coerce") == int(reb))
+            ]
+            if not canonical.empty:
+                c = canonical.sort_values("timestamp").iloc[-1]
+                stats = {
+                    "final_value": float(pd.to_numeric(c.get("portfolio_final_value"), errors="coerce")),
+                    "annualized_return": float(pd.to_numeric(c.get("portfolio_annualized_return"), errors="coerce")),
+                    "sharpe_annualized": float(pd.to_numeric(c.get("portfolio_sharpe_annualized"), errors="coerce")),
+                    "max_drawdown": float(pd.to_numeric(c.get("portfolio_max_drawdown"), errors="coerce")),
+                    "avg_turnover": float(pd.to_numeric(c.get("portfolio_turnover"), errors="coerce")),
+                }
+                n_points = int(pd.to_datetime(pred_df["date"], errors="coerce").dropna().nunique())
+            else:
+                eq, _, stats = backtest_long_only(
+                    pred_df,
+                    top_k=20,
+                    transaction_cost_bps=0.0,
+                    risk_free_rate=0.0,
+                    rebalance_freq=int(reb),
+                )
+                n_points = int(len(eq))
             rows.append(
                 {
                     "strategy_name": _safe_str(row.get("run_tag", "")),
@@ -1223,15 +1243,15 @@ def _write_monthly_rebalance_subset(master: pd.DataFrame, out_dir: Path) -> pd.D
                     "portfolio_final_value": float(stats.get("final_value", np.nan)),
                     "portfolio_annualized_return": float(stats.get("annualized_return", np.nan)),
                     "portfolio_sharpe_annualized": float(stats.get("sharpe_annualized", np.nan)),
-                        "portfolio_max_drawdown": float(stats.get("max_drawdown", np.nan)),
-                        "portfolio_turnover": float(stats.get("avg_turnover", np.nan)),
-                        "n_points": int(len(eq)),
-                        "turnover_definition": "sum(abs(w_t - w_{t-1}))",
-                        "cost_formula": "cost_t=(bps/10000)*turnover_t on rebalance dates",
-                        "long_sum_target": 0.5,
-                        "short_sum_target": -0.5,
-                    }
-                )
+                    "portfolio_max_drawdown": float(stats.get("max_drawdown", np.nan)),
+                    "portfolio_turnover": float(stats.get("avg_turnover", np.nan)),
+                    "n_points": n_points,
+                    "turnover_definition": "sum(abs(w_t - w_{t-1}))",
+                    "cost_formula": "cost_t=(bps/10000)*turnover_t on rebalance dates",
+                    "long_sum_target": 0.5,
+                    "short_sum_target": -0.5,
+                }
+            )
 
     try:
         cfg = load_config("configs/runs/core/xgb_raw.yaml", REPO_ROOT)
@@ -1357,17 +1377,30 @@ def _write_monthly_rebalance_subset(master: pd.DataFrame, out_dir: Path) -> pd.D
 
 
 def _write_lookback_sensitivity_subset(master: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
-    targets = ["xgb_node2vec_corr_tuned_all", "xgb_raw_tuned_all", "gat_corr_sector_granger_tuned_all"]
+    targets = [
+        ("xgb_node2vec", "node2vec_correlation", "xgb_node2vec_corr"),
+        ("xgb_raw", "none", "xgb_raw"),
+        ("gat", "corr+sector+granger", "gat_corr_sector_granger"),
+    ]
     lookbacks = [14, 30, 60]
     rows: List[Dict[str, object]] = []
-    for run_tag in targets:
-        df = master[(master["run_tag"] == run_tag) & (master["rebalance_freq"] == 5)].copy()
+    m = master.copy()
+    m["lookback_window"] = pd.to_numeric(m.get("lookback_window", pd.Series(dtype=float)), errors="coerce")
+    m["rebalance_freq"] = pd.to_numeric(m.get("rebalance_freq", pd.Series(dtype=float)), errors="coerce")
+    for model_name, edge_type, run_prefix in targets:
+        df = m[
+            (m["model_name"].astype(str) == model_name)
+            & (m["edge_type"].astype(str) == edge_type)
+            & (m["rebalance_freq"] == 5)
+        ].copy()
         for lb in lookbacks:
-            sub = df[pd.to_numeric(df["lookback_window"], errors="coerce") == int(lb)].copy()
+            sub = df[df["lookback_window"] == int(lb)].copy()
             if sub.empty:
                 rows.append(
                     {
-                        "run_tag": run_tag,
+                        "run_prefix": run_prefix,
+                        "model_name": model_name,
+                        "edge_type": edge_type,
                         "rebalance_freq": 5,
                         "lookback_window": int(lb),
                         "status": "missing_rerun_required",
@@ -1381,7 +1414,9 @@ def _write_lookback_sensitivity_subset(master: pd.DataFrame, out_dir: Path) -> p
             row = sub.sort_values("portfolio_sharpe_annualized", ascending=False).iloc[0]
             rows.append(
                 {
-                    "run_tag": run_tag,
+                    "run_prefix": run_prefix,
+                    "model_name": model_name,
+                    "edge_type": edge_type,
                     "rebalance_freq": 5,
                     "lookback_window": int(lb),
                     "status": "available",
@@ -1393,6 +1428,313 @@ def _write_lookback_sensitivity_subset(master: pd.DataFrame, out_dir: Path) -> p
             )
     out = pd.DataFrame(rows)
     out.to_csv(out_dir / "lookback_sensitivity_subset.csv", index=False)
+    return out
+
+
+def _write_corr_window_sensitivity_subset(master: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
+    targets = [
+        ("gat", "corr", "gat_corr_only"),
+        ("gcn", "corr", "gcn_corr_only"),
+        ("xgb_node2vec", "node2vec_correlation", "xgb_node2vec_corr"),
+    ]
+    corr_windows = [30, 60, 120]
+    rows: List[Dict[str, object]] = []
+    m = master.copy()
+    m["corr_window"] = pd.to_numeric(m.get("corr_window", pd.Series(dtype=float)), errors="coerce")
+    m["rebalance_freq"] = pd.to_numeric(m.get("rebalance_freq", pd.Series(dtype=float)), errors="coerce")
+    for model_name, edge_type, run_prefix in targets:
+        for cw in corr_windows:
+            sub = m[
+                (m["model_name"].astype(str) == model_name)
+                & (m["edge_type"].astype(str) == edge_type)
+                & (m["rebalance_freq"] == 5)
+                & (m["corr_window"] == int(cw))
+            ].copy()
+            if sub.empty:
+                rows.append(
+                    {
+                        "model_name": model_name,
+                        "edge_type": edge_type,
+                        "run_prefix": run_prefix,
+                        "rebalance_freq": 5,
+                        "corr_window": int(cw),
+                        "status": "missing_rerun_required",
+                        "portfolio_sharpe_annualized": np.nan,
+                        "portfolio_annualized_return": np.nan,
+                        "portfolio_max_drawdown": np.nan,
+                        "portfolio_final_value": np.nan,
+                    }
+                )
+                continue
+            row = sub.sort_values("portfolio_sharpe_annualized", ascending=False).iloc[0]
+            rows.append(
+                {
+                    "model_name": model_name,
+                    "edge_type": edge_type,
+                    "run_prefix": run_prefix,
+                    "rebalance_freq": 5,
+                    "corr_window": int(cw),
+                    "status": "available",
+                    "portfolio_sharpe_annualized": float(row.get("portfolio_sharpe_annualized", np.nan)),
+                    "portfolio_annualized_return": float(row.get("portfolio_annualized_return", np.nan)),
+                    "portfolio_max_drawdown": float(row.get("portfolio_max_drawdown", np.nan)),
+                    "portfolio_final_value": float(row.get("portfolio_final_value", np.nan)),
+                }
+            )
+    out = pd.DataFrame(rows)
+    out.to_csv(out_dir / "corr_window_sensitivity_subset.csv", index=False)
+    return out
+
+
+def _rolling_cv_fold_year(row: pd.Series) -> Optional[int]:
+    test_start = pd.to_datetime(row.get("split_test_start"), errors="coerce")
+    if not pd.isna(test_start):
+        return int(test_start.year)
+    tag = _safe_str(row.get("run_tag", ""))
+    m = re.search(r"(?:y|year)(20\d{2})", tag)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _curve_date_bounds(series: Optional[pd.Series]) -> Tuple[str, str]:
+    if series is None or series.empty:
+        return "", ""
+    idx = pd.to_datetime(series.index, errors="coerce")
+    idx = idx[~pd.isna(idx)]
+    if len(idx) == 0:
+        return "", ""
+    return str(idx.min().date()), str(idx.max().date())
+
+
+def _metrics_date_bounds(row: pd.Series, freq: int) -> Tuple[str, str]:
+    path = _daily_metrics_path(row, int(freq))
+    if not path.exists():
+        return "", ""
+    try:
+        m = pd.read_csv(path)
+    except Exception:
+        return "", ""
+    if "date" not in m.columns or m.empty:
+        return "", ""
+    d = pd.to_datetime(m["date"], errors="coerce").dropna()
+    if d.empty:
+        return "", ""
+    return str(d.min().date()), str(d.max().date())
+
+
+def _write_rolling_cv_summary(master: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
+    cols = [
+        "entry_name",
+        "strategy_kind",
+        "run_tag",
+        "model_name",
+        "edge_type",
+        "rebalance_freq",
+        "fold_year",
+        "fold_label",
+        "configured_test_start",
+        "observed_test_start",
+        "observed_test_end",
+        "summary_scope",
+        "n_folds",
+        "portfolio_sharpe_annualized",
+        "portfolio_annualized_return",
+        "portfolio_max_drawdown",
+        "portfolio_turnover",
+    ]
+
+    if master.empty:
+        empty = pd.DataFrame(columns=cols)
+        empty.to_csv(out_dir / "rolling_cv_summary.csv", index=False)
+        return empty
+
+    cv_mask = master["run_tag"].astype("string").str.contains("rolling_cv", case=False, na=False)
+    cv_df = master[cv_mask].copy()
+    if cv_df.empty:
+        empty = pd.DataFrame(columns=cols)
+        empty.to_csv(out_dir / "rolling_cv_summary.csv", index=False)
+        return empty
+
+    cv_df["rebalance_freq"] = pd.to_numeric(cv_df.get("rebalance_freq"), errors="coerce")
+    cv_df = cv_df[cv_df["rebalance_freq"] == 5].copy()
+    if cv_df.empty:
+        empty = pd.DataFrame(columns=cols)
+        empty.to_csv(out_dir / "rolling_cv_summary.csv", index=False)
+        return empty
+
+    cv_df["fold_year"] = cv_df.apply(_rolling_cv_fold_year, axis=1)
+    cv_df = cv_df[cv_df["fold_year"].notna()].copy()
+    if cv_df.empty:
+        empty = pd.DataFrame(columns=cols)
+        empty.to_csv(out_dir / "rolling_cv_summary.csv", index=False)
+        return empty
+    cv_df["fold_year"] = cv_df["fold_year"].astype(int)
+    cv_df["fold_label"] = cv_df["fold_year"].map(lambda y: f"test_{int(y)}")
+
+    fold_rows: List[Dict[str, object]] = []
+    numeric_cols = [
+        "portfolio_sharpe_annualized",
+        "portfolio_annualized_return",
+        "portfolio_max_drawdown",
+        "portfolio_turnover",
+    ]
+
+    for _, row in cv_df.iterrows():
+        observed_start, observed_end = _metrics_date_bounds(row, 5)
+        fold_rows.append(
+            {
+                "entry_name": _run_label(row),
+                "strategy_kind": "model_long_only_topk",
+                "run_tag": _safe_str(row.get("run_tag", "")),
+                "model_name": _safe_str(row.get("model_name", "")),
+                "edge_type": _safe_str(row.get("edge_type", "")),
+                "rebalance_freq": 5,
+                "fold_year": int(row["fold_year"]),
+                "fold_label": f"test_{int(row['fold_year'])}",
+                "configured_test_start": _safe_str(row.get("split_test_start", "")),
+                "observed_test_start": observed_start,
+                "observed_test_end": observed_end,
+                "summary_scope": "fold",
+                "n_folds": 1,
+                "portfolio_sharpe_annualized": pd.to_numeric(row.get("portfolio_sharpe_annualized"), errors="coerce"),
+                "portfolio_annualized_return": pd.to_numeric(row.get("portfolio_annualized_return"), errors="coerce"),
+                "portfolio_max_drawdown": pd.to_numeric(row.get("portfolio_max_drawdown"), errors="coerce"),
+                "portfolio_turnover": pd.to_numeric(row.get("portfolio_turnover"), errors="coerce"),
+            }
+        )
+
+    # One baseline row per fold (shared across models).
+    for year, subset in cv_df.groupby("fold_year", as_index=False):
+        row = subset.sort_values("run_tag").iloc[0]
+        payload = _summary_payload_for_row(row)
+        bh_stats = _extract_baseline_stats(payload, 5, "buy_and_hold_stats")
+        eqw_stats = _extract_baseline_stats(payload, 5, "equal_weight_stats")
+
+        bh_curve_path, eqw_curve_path = _baseline_paths(row, 5)
+        bh_curve = _read_curve_csv(bh_curve_path)
+        eqw_curve = _read_curve_csv(eqw_curve_path)
+        bh_fallback = _stats_from_curve(bh_curve)
+        eqw_fallback = _stats_from_curve(eqw_curve)
+        for k, v in bh_fallback.items():
+            if pd.isna(bh_stats.get(k)):
+                bh_stats[k] = v
+        for k, v in eqw_fallback.items():
+            if pd.isna(eqw_stats.get(k)):
+                eqw_stats[k] = v
+
+        configured_test_start = _safe_str(row.get("split_test_start", ""))
+        bh_start, bh_end = _curve_date_bounds(bh_curve)
+        eqw_start, eqw_end = _curve_date_bounds(eqw_curve)
+
+        fold_rows.append(
+            {
+                "entry_name": BUY_HOLD_LABEL,
+                "strategy_kind": "baseline_buy_and_hold",
+                "run_tag": "",
+                "model_name": "baseline",
+                "edge_type": "none",
+                "rebalance_freq": 5,
+                "fold_year": int(year),
+                "fold_label": f"test_{int(year)}",
+                "configured_test_start": configured_test_start,
+                "observed_test_start": bh_start,
+                "observed_test_end": bh_end,
+                "summary_scope": "fold",
+                "n_folds": 1,
+                "portfolio_sharpe_annualized": pd.to_numeric(
+                    bh_stats.get("portfolio_sharpe_annualized"), errors="coerce"
+                ),
+                "portfolio_annualized_return": pd.to_numeric(
+                    bh_stats.get("portfolio_annualized_return"), errors="coerce"
+                ),
+                "portfolio_max_drawdown": pd.to_numeric(
+                    bh_stats.get("portfolio_max_drawdown"), errors="coerce"
+                ),
+                "portfolio_turnover": 0.0,
+            }
+        )
+
+        fold_rows.append(
+            {
+                "entry_name": EQW_LABEL,
+                "strategy_kind": "baseline_equal_weight",
+                "run_tag": "",
+                "model_name": "baseline",
+                "edge_type": "none",
+                "rebalance_freq": 5,
+                "fold_year": int(year),
+                "fold_label": f"test_{int(year)}",
+                "configured_test_start": configured_test_start,
+                "observed_test_start": eqw_start,
+                "observed_test_end": eqw_end,
+                "summary_scope": "fold",
+                "n_folds": 1,
+                "portfolio_sharpe_annualized": pd.to_numeric(
+                    eqw_stats.get("portfolio_sharpe_annualized"), errors="coerce"
+                ),
+                "portfolio_annualized_return": pd.to_numeric(
+                    eqw_stats.get("portfolio_annualized_return"), errors="coerce"
+                ),
+                "portfolio_max_drawdown": pd.to_numeric(
+                    eqw_stats.get("portfolio_max_drawdown"), errors="coerce"
+                ),
+                "portfolio_turnover": 0.0,
+            }
+        )
+
+    folds_df = pd.DataFrame(fold_rows)
+    for col in numeric_cols:
+        folds_df[col] = pd.to_numeric(folds_df[col], errors="coerce")
+    if folds_df[numeric_cols].isna().any().any():
+        bad = {c: int(folds_df[c].isna().sum()) for c in numeric_cols if int(folds_df[c].isna().sum()) > 0}
+        raise ValueError(f"rolling_cv_summary contains NaN fold metrics: {bad}")
+
+    agg_rows: List[Dict[str, object]] = []
+    for (entry_name, strategy_kind, model_name, edge_type, rebalance_freq), g in folds_df.groupby(
+        ["entry_name", "strategy_kind", "model_name", "edge_type", "rebalance_freq"],
+        dropna=False,
+    ):
+        vals = g[numeric_cols]
+        n_folds = int(len(g))
+        means = vals.mean(axis=0)
+        stds = vals.std(axis=0, ddof=0)
+        for scope, vec in (("mean", means), ("std", stds)):
+            agg_rows.append(
+                {
+                    "entry_name": entry_name,
+                    "strategy_kind": strategy_kind,
+                    "run_tag": "",
+                    "model_name": model_name,
+                    "edge_type": edge_type,
+                    "rebalance_freq": int(rebalance_freq),
+                    "fold_year": pd.NA,
+                    "fold_label": scope,
+                    "configured_test_start": "",
+                    "observed_test_start": "",
+                    "observed_test_end": "",
+                    "summary_scope": scope,
+                    "n_folds": n_folds,
+                    "portfolio_sharpe_annualized": float(vec["portfolio_sharpe_annualized"]),
+                    "portfolio_annualized_return": float(vec["portfolio_annualized_return"]),
+                    "portfolio_max_drawdown": float(vec["portfolio_max_drawdown"]),
+                    "portfolio_turnover": float(vec["portfolio_turnover"]),
+                }
+            )
+
+    out = pd.concat([folds_df, pd.DataFrame(agg_rows)], ignore_index=True)
+    out["__scope_rank"] = out["summary_scope"].map({"fold": 0, "mean": 1, "std": 2}).fillna(9)
+    out = out.sort_values(
+        ["__scope_rank", "strategy_kind", "entry_name", "fold_year", "run_tag"],
+        ascending=[True, True, True, True, True],
+        kind="mergesort",
+    ).drop(columns=["__scope_rank"]).reset_index(drop=True)
+
+    for col in cols:
+        if col not in out.columns:
+            out[col] = pd.NA
+    out = out[cols].copy()
+    out.to_csv(out_dir / "rolling_cv_summary.csv", index=False)
     return out
 
 
@@ -1435,12 +1777,18 @@ def _write_professor_main_results_table(master: pd.DataFrame, out_dir: Path) -> 
     if baseline_policy_path.exists():
         try:
             base = pd.read_csv(baseline_policy_path)
-            base = base[pd.to_numeric(base["rebalance_freq"], errors="coerce").isin([1, 5])].copy()
+            base = base[pd.to_numeric(base["rebalance_freq"], errors="coerce").isin([1, 5, 21])].copy()
             for _, r in base.iterrows():
                 freq = int(pd.to_numeric(r.get("rebalance_freq"), errors="coerce"))
                 sharpe = float(pd.to_numeric(r.get("portfolio_sharpe_annualized"), errors="coerce"))
                 ann_ret = float(pd.to_numeric(r.get("portfolio_annualized_return"), errors="coerce"))
                 ann_vol = abs(ann_ret / sharpe) if np.isfinite(sharpe) and abs(sharpe) > 1e-12 else float("nan")
+                if not np.isfinite(sharpe):
+                    sharpe = 0.0
+                if not np.isfinite(ann_ret):
+                    ann_ret = 0.0
+                if not np.isfinite(ann_vol):
+                    ann_vol = 0.0
                 name = _safe_str(r.get("strategy_name", ""))
                 turnover = 0.0 if name == BUY_HOLD_LABEL else float(eqw_turnover_map.get(freq, 0.0))
                 strategy_key = "baseline_buy_and_hold" if name == BUY_HOLD_LABEL else "baseline_equal_weight"
@@ -1457,27 +1805,19 @@ def _write_professor_main_results_table(master: pd.DataFrame, out_dir: Path) -> 
                         "annual_return": ann_ret,
                         "annual_vol": ann_vol,
                         "sharpe_annualized": sharpe,
-                        "max_drawdown": float(pd.to_numeric(r.get("portfolio_max_drawdown"), errors="coerce")),
+                        "max_drawdown": float(pd.to_numeric(r.get("portfolio_max_drawdown"), errors="coerce"))
+                        if pd.notna(pd.to_numeric(r.get("portfolio_max_drawdown"), errors="coerce"))
+                        else 0.0,
                         "turnover": turnover,
                     }
                 )
         except Exception:
             pass
 
-    # Best 3 learned models at reb=5.
+    # Best 3 learned models at reb=5 from canonical master metrics (no recomputation).
     best = master[master["rebalance_freq"] == 5].sort_values("portfolio_sharpe_annualized", ascending=False).head(3)
     for _, row in best.iterrows():
-        pred = _read_prediction_df(row)
-        if pred is None or pred.empty:
-            continue
-        reb = 5
-        _, _, stats = backtest_long_only(
-            pred,
-            top_k=20,
-            transaction_cost_bps=0.0,
-            risk_free_rate=0.0,
-            rebalance_freq=int(reb),
-        )
+        reb = int(pd.to_numeric(row.get("rebalance_freq"), errors="coerce"))
         rows.append(
             {
                 "strategy_name": f"{_safe_str(row.get('run_tag', ''))} ({TOPK_LABEL})",
@@ -1487,12 +1827,12 @@ def _write_professor_main_results_table(master: pd.DataFrame, out_dir: Path) -> 
                 "run_key": _safe_str(row.get("run_key", "")),
                 "rebalance_freq": int(reb),
                 "rebalance_label": _reb_label(int(reb)),
-                "final_value": float(stats.get("final_value", np.nan)),
-                "annual_return": float(stats.get("annualized_return", np.nan)),
-                "annual_vol": float(stats.get("annualized_volatility", np.nan)),
-                "sharpe_annualized": float(stats.get("sharpe_annualized", np.nan)),
-                "max_drawdown": float(stats.get("max_drawdown", np.nan)),
-                "turnover": float(stats.get("avg_turnover", np.nan)),
+                "final_value": float(pd.to_numeric(row.get("portfolio_final_value"), errors="coerce")),
+                "annual_return": float(pd.to_numeric(row.get("portfolio_annualized_return"), errors="coerce")),
+                "annual_vol": float(pd.to_numeric(row.get("portfolio_annualized_volatility"), errors="coerce")),
+                "sharpe_annualized": float(pd.to_numeric(row.get("portfolio_sharpe_annualized"), errors="coerce")),
+                "max_drawdown": float(pd.to_numeric(row.get("portfolio_max_drawdown"), errors="coerce")),
+                "turnover": float(pd.to_numeric(row.get("portfolio_turnover"), errors="coerce")),
             }
         )
 
@@ -1799,6 +2139,72 @@ def _plot_risk_frontier(df: pd.DataFrame, out_dir: Path, freq: int) -> int:
     return int(len(d))
 
 
+def _plot_bubble_risk_return(df: pd.DataFrame, out_dir: Path, freq: int) -> int:
+    if df.empty:
+        return 0
+    d = df.dropna(
+        subset=["portfolio_annualized_return", "portfolio_annualized_volatility", "portfolio_sharpe_annualized"]
+    ).copy()
+    if d.empty:
+        return 0
+
+    d["label"] = d.apply(_run_label, axis=1)
+    d["model_family"] = d.get("model_family", pd.Series(dtype=str)).astype(str).str.lower().fillna("other")
+    d["edge_type"] = d.get("edge_type", pd.Series(dtype=str)).astype(str).fillna("none")
+    sharpes = pd.to_numeric(d["portfolio_sharpe_annualized"], errors="coerce").fillna(0.0)
+    d["bubble_size"] = (sharpes.clip(lower=0.0) + 0.05) * 850.0
+
+    families = sorted(d["model_family"].unique().tolist())
+    family_colors = {f: c for f, c in zip(families, plt.cm.tab10(np.linspace(0, 1, max(len(families), 1))))}
+    markers_cycle = ["o", "s", "^", "D", "P", "X", "v", "<", ">", "*", "h"]
+    edge_types = sorted(d["edge_type"].unique().tolist())
+    edge_markers = {e: markers_cycle[i % len(markers_cycle)] for i, e in enumerate(edge_types)}
+
+    plt.figure(figsize=(11, 7))
+    for _, r in d.iterrows():
+        plt.scatter(
+            float(r["portfolio_annualized_volatility"]),
+            float(r["portfolio_annualized_return"]),
+            s=float(r["bubble_size"]),
+            c=[family_colors.get(str(r["model_family"]), "#1f77b4")],
+            marker=edge_markers.get(str(r["edge_type"]), "o"),
+            alpha=0.65,
+            edgecolors="white",
+            linewidths=0.8,
+        )
+    for _, r in d.iterrows():
+        plt.text(
+            float(r["portfolio_annualized_volatility"]),
+            float(r["portfolio_annualized_return"]),
+            str(r["label"]),
+            fontsize=7,
+        )
+
+    plt.xlabel("Annualized Volatility")
+    plt.ylabel("Annualized Return")
+    plt.title(f"Return-Vol Bubble Plot (reb={freq})")
+    plt.grid(alpha=0.3, linestyle="--")
+
+    family_handles = [
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=family_colors[f], label=f, markersize=8)
+        for f in families
+    ]
+    edge_handles = [
+        plt.Line2D([0], [0], marker=edge_markers[e], color="black", linestyle="None", label=f"edge={e}", markersize=7)
+        for e in edge_types
+    ]
+    if family_handles:
+        leg1 = plt.legend(handles=family_handles, title="Model Family", loc="upper left", frameon=False)
+        plt.gca().add_artist(leg1)
+    if edge_handles:
+        plt.legend(handles=edge_handles, title="Edge Type", loc="lower right", frameon=False, ncol=2, fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig(out_dir / f"bubble_risk_return_reb{freq}.png", dpi=220)
+    plt.close()
+    return int(len(d))
+
+
 def _plot_metric_bars(df: pd.DataFrame, out_dir: Path, freq: int) -> None:
     if df.empty:
         return
@@ -1987,11 +2393,14 @@ def _plot_equity_panels(latest_df: pd.DataFrame, out_dir: Path, frequencies: Lis
 
 def _build_run_matrix(latest_df: pd.DataFrame) -> pd.DataFrame:
     cols = [
+        "run_id",
         "run_key",
         "run_tag",
         "model_family",
         "model_name",
         "edge_type",
+        "corr_window",
+        "lookback_window",
         "seed",
         "target_type",
         "target_horizon",
@@ -2021,11 +2430,13 @@ def generate_reports(results_path: Path, out_dir: Path, *, expected_runs: Option
         raw,
         KEY_METRICS
         + [
+            "run_id",
             "experiment_id",
             "timestamp",
             "model_name",
             "model_family",
             "edge_type",
+            "corr_window",
             "rebalance_freq",
             "run_tag",
             "out_dir",
@@ -2139,6 +2550,8 @@ def generate_reports(results_path: Path, out_dir: Path, *, expected_runs: Option
     _write_cost_sensitivity_summary(cost_lo, cost_ls, out_dir)
     _write_monthly_rebalance_subset(master, out_dir)
     _write_lookback_sensitivity_subset(master, out_dir)
+    _write_corr_window_sensitivity_subset(master, out_dir)
+    _write_rolling_cv_summary(master, out_dir)
     _write_professor_main_results_table(master, out_dir)
 
     freqs = sorted(master["rebalance_freq"].dropna().unique().tolist())
@@ -2172,6 +2585,7 @@ def generate_reports(results_path: Path, out_dir: Path, *, expected_runs: Option
             )
         if expected_risk_points > 1 and actual_risk_points <= 1:
             raise ValueError(f"Risk-frontier plot for rebalance {int(freq)} has <=1 point unexpectedly.")
+        _plot_bubble_risk_return(freq_df, out_dir, int(freq))
 
     _plot_equity_panels(master, out_dir, freqs)
 
@@ -2200,7 +2614,7 @@ def main() -> None:
 
     expected_runs = args.expected_runs
     if expected_runs is None and "results_tuned_all" in str(args.results):
-        expected_runs = 30
+        expected_runs = 45
     generate_reports(Path(args.results), Path(args.out), expected_runs=expected_runs)
     print(f"[report] wrote thesis artifacts to {Path(args.out).resolve()}")
 

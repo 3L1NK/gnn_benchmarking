@@ -842,8 +842,12 @@ def _export_lookback_sensitivity_subset(lookback: pd.DataFrame) -> None:
         )
         return
     subset = lookback.copy()
+    if "run_tag" not in subset.columns and "run_prefix" in subset.columns:
+        subset["run_tag"] = subset["run_prefix"]
     keep = [
         "run_tag",
+        "model_name",
+        "edge_type",
         "rebalance_freq",
         "lookback_window",
         "status",
@@ -857,6 +861,8 @@ def _export_lookback_sensitivity_subset(lookback: pd.DataFrame) -> None:
     subset = subset.rename(
         columns={
             "run_tag": "Run",
+            "model_name": "Model",
+            "edge_type": "Edge",
             "rebalance_freq": "Reb",
             "lookback_window": "Lookback",
             "status": "Status",
@@ -875,6 +881,105 @@ def _export_lookback_sensitivity_subset(lookback: pd.DataFrame) -> None:
         out_name="lookback_sensitivity_subset.tex",
         caption="Lookback sensitivity subset (14/30/60); missing entries require retraining.",
         label="tab:lookback-sensitivity-subset",
+    )
+
+
+def _export_corr_window_sensitivity_subset(corr_window: pd.DataFrame) -> None:
+    if corr_window.empty:
+        _write_no_data_table(
+            out_name="corr_window_sensitivity_subset.tex",
+            caption="Correlation-window sensitivity subset (30/60/120); missing entries require retraining.",
+            label="tab:corr-window-sensitivity-subset",
+        )
+        return
+    subset = corr_window.copy()
+    if "run_tag" not in subset.columns and "run_prefix" in subset.columns:
+        subset["run_tag"] = subset["run_prefix"]
+    keep = [
+        "run_tag",
+        "model_name",
+        "edge_type",
+        "rebalance_freq",
+        "corr_window",
+        "status",
+        "portfolio_sharpe_annualized",
+        "portfolio_annualized_return",
+        "portfolio_max_drawdown",
+        "portfolio_final_value",
+    ]
+    keep = [c for c in keep if c in subset.columns]
+    subset = subset[keep].copy()
+    subset = subset.rename(
+        columns={
+            "run_tag": "Run",
+            "model_name": "Model",
+            "edge_type": "Edge",
+            "rebalance_freq": "Reb",
+            "corr_window": "Corr Window",
+            "status": "Status",
+            "portfolio_sharpe_annualized": "Sharpe",
+            "portfolio_annualized_return": "Ann Return",
+            "portfolio_max_drawdown": "Max DD",
+            "portfolio_final_value": "Final",
+        }
+    )
+    if "Run" in subset.columns:
+        subset["Run"] = subset["Run"].map(_run_tag_to_label)
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
+    _write_table(
+        subset,
+        out_name="corr_window_sensitivity_subset.tex",
+        caption="Correlation-window sensitivity subset (30/60/120); missing entries require retraining.",
+        label="tab:corr-window-sensitivity-subset",
+    )
+
+
+def _export_rolling_cv_table(rolling_cv: pd.DataFrame) -> None:
+    if rolling_cv.empty:
+        _write_no_data_table(
+            out_name="rolling_cv_table.tex",
+            caption="Rolling walk-forward CV summary (test years 2020--2024, rebalance\\_freq=5, gross costs).",
+            label="tab:rolling-cv-table",
+        )
+        return
+    subset = rolling_cv.copy()
+    keep = [
+        "entry_name",
+        "strategy_kind",
+        "summary_scope",
+        "fold_label",
+        "rebalance_freq",
+        "portfolio_sharpe_annualized",
+        "portfolio_annualized_return",
+        "portfolio_max_drawdown",
+        "portfolio_turnover",
+        "n_folds",
+    ]
+    keep = [c for c in keep if c in subset.columns]
+    subset = subset[keep].copy()
+    subset = subset.rename(
+        columns={
+            "entry_name": "Entry",
+            "strategy_kind": "Kind",
+            "summary_scope": "Scope",
+            "fold_label": "Fold",
+            "rebalance_freq": "Reb",
+            "portfolio_sharpe_annualized": "Sharpe",
+            "portfolio_annualized_return": "Ann Return",
+            "portfolio_max_drawdown": "Max DD",
+            "portfolio_turnover": "Turnover",
+            "n_folds": "N Folds",
+        }
+    )
+    if "Reb" in subset.columns:
+        subset["Reb"] = subset["Reb"].map(_reb_to_label)
+    subset = subset.sort_values(["Scope", "Kind", "Entry", "Fold"], kind="mergesort").reset_index(drop=True)
+    _write_table(
+        subset,
+        out_name="rolling_cv_table.tex",
+        caption="Rolling walk-forward CV summary (test years 2020--2024, rebalance\\_freq=5, gross costs).",
+        label="tab:rolling-cv-table",
     )
 
 
@@ -937,6 +1042,8 @@ def main() -> None:
     audit_status = _load_csv_optional("audit_status.csv")
     monthly_subset = _load_csv_optional("monthly_rebalance_subset.csv")
     lookback_subset = _load_csv_optional("lookback_sensitivity_subset.csv")
+    corr_window_subset = _load_csv_optional("corr_window_sensitivity_subset.csv")
+    rolling_cv_summary = _load_csv_optional("rolling_cv_summary.csv")
     professor_main = _load_csv_optional("professor_main_results_table.csv")
 
     _export_top_models(master)
@@ -955,6 +1062,8 @@ def main() -> None:
     _export_audit_status(audit_status)
     _export_monthly_rebalance_subset(monthly_subset)
     _export_lookback_sensitivity_subset(lookback_subset)
+    _export_corr_window_sensitivity_subset(corr_window_subset)
+    _export_rolling_cv_table(rolling_cv_summary)
     _export_professor_main_results_table(professor_main)
 
     print(f"Using report directory: {REPORT_DIR}")

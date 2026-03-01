@@ -1,0 +1,21 @@
+{
+  "run_id": "m-gat__f-gnn__e-corr-sector-granger__cw-60__lb-250__sp-2041bcaeeadb__sd-42__tg-fixed-medium",
+  "run_tag": "gat_corr_sector_granger_rolling_cv_y2022",
+  "artifact_prefix": "gat",
+  "rebalance_freq": 1,
+  "stats": {
+    "final_value": 0.9589424341031029,
+    "cumulative_return": -0.048343062120693725,
+    "annualized_return": -0.048720229259903824,
+    "annualized_volatility": 0.21599763646384582,
+    "max_drawdown": -0.19000293880433827,
+    "sharpe": -0.005559735299652807,
+    "sharpe_annualized": -0.08825812661365925,
+    "sortino_annualized": -0.14072428711673868,
+    "avg_turnover": 0.6328
+  },
+  "series_paths": {
+    "daily_metrics_csv": "results/runs/m-gat__f-gnn__e-corr-sector-granger__cw-60__lb-250__sp-2041bcaeeadb__sd-42__tg-fixed-medium/gat_daily_metrics_reb1.csv",
+    "equity_curve_csv": "results/runs/m-gat__f-gnn__e-corr-sector-granger__cw-60__lb-250__sp-2041bcaeeadb__sd-42__tg-fixed-medium/gat_equity_curve_reb1.csv"
+  }
+}

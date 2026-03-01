@@ -1,0 +1,68 @@
+experiment_name: xgb_raw
+data:
+  price_file: data/processed/prices.parquet
+  start_date: '2000-01-01'
+  end_date: '2024-12-31'
+  target_horizon: 1
+  target_type: regression
+  target_name: log_return
+  lookback_window: 60
+tuning:
+  enabled: false
+  param_grid:
+    max_depth:
+    - 3
+    - 5
+    - 8
+    - 10
+    - 12
+    - 15
+    learning_rate:
+    - 0.001
+    - 0.005
+    - 0.01
+    - 0.03
+    n_estimators:
+    - 100
+    - 300
+    - 400
+    - 500
+    subsample:
+    - 0.7
+    - 0.9
+    colsample_bytree:
+    - 0.7
+    - 0.9
+    reg_lambda:
+    - 0.0
+    - 1.0
+model:
+  family: xgboost
+  type: xgb_raw
+  params:
+    max_depth: 8
+    learning_rate: 0.01
+    n_estimators: 100
+    subsample: 0.7
+    colsample_bytree: 0.9
+    reg_lambda: 0.0
+training:
+  val_start: '2016-01-01'
+  test_start: '2020-01-01'
+evaluation:
+  top_k: 20
+  transaction_cost_bps: 0
+  risk_free_rate: 0.0
+  backtest_policies:
+  - 1
+  - 5
+  primary_rebalance_freq: 1
+  results_path: results/results.jsonl
+  out_dir: experiments/xgb_raw
+experiment:
+  protocol_version: v1_thesis_core
+  enforce_protocol: true
+graph: {}
+granger: {}
+cache:
+  rebuild: false

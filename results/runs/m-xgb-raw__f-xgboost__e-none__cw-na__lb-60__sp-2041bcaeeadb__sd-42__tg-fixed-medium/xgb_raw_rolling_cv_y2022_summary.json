@@ -1,0 +1,184 @@
+{
+  "run_tag": "xgb_raw_rolling_cv_y2022",
+  "model_type": "xgb_raw",
+  "protocol_version": "v1_rolling_cv_subset",
+  "target_policy_hash": "0ccfda622ba4",
+  "stats": {
+    "final_value": 0.881759347666624,
+    "cumulative_return": -0.12125214399345863,
+    "annualized_return": -0.12216035077422582,
+    "annualized_volatility": 0.21586068138559628,
+    "max_drawdown": -0.20209895251215404,
+    "sharpe": -0.03023393367278188,
+    "sortino": -0.04839960179663034,
+    "sharpe_annualized": -0.4799491708772963,
+    "sortino_annualized": -0.7683198594506331,
+    "avg_turnover": 0.1476
+  },
+  "buy_and_hold_stats": {
+    "final_value": 0.7049108139,
+    "cumulative_return": -0.2950891861,
+    "annualized_return": -0.2980527705,
+    "annualized_volatility": 0.3340590672,
+    "max_drawdown": -0.3434520579,
+    "sharpe": -0.0562067886,
+    "sortino": -0.09338801420000001,
+    "sharpe_annualized": -0.8922555311,
+    "sortino_annualized": -1.4824887656
+  },
+  "equal_weight_stats": {
+    "final_value": 0.8922657057000001,
+    "cumulative_return": -0.1077342943,
+    "annualized_return": -0.1089588813,
+    "annualized_volatility": 0.2250683946,
+    "max_drawdown": -0.2194262751,
+    "sharpe": -0.0252181317,
+    "sortino": -0.0398198847,
+    "sharpe_annualized": -0.4003257127,
+    "sortino_annualized": -0.6321210730000001
+  },
+  "ic_mean": 0.016717674573405113,
+  "ic_tstat": 1.0415663633738461,
+  "volatility": 0.2154285274358549,
+  "max_drawdown": -0.20209895251215404,
+  "stats_by_rebalance_freq": {
+    "1": {
+      "stats": {
+        "final_value": 0.9038909594889497,
+        "cumulative_return": -0.09919611874087386,
+        "annualized_return": -0.09994864360902389,
+        "annualized_volatility": 0.21798660775027487,
+        "max_drawdown": -0.20796923284513336,
+        "sharpe": -0.022594427687040522,
+        "sortino": -0.03657248414279551,
+        "sharpe_annualized": -0.35867568125378785,
+        "sortino_annualized": -0.580570187218141,
+        "avg_turnover": 0.5952000000000001
+      },
+      "buy_and_hold_stats": {
+        "final_value": 0.7049108139,
+        "cumulative_return": -0.2950891861,
+        "annualized_return": -0.2980527705,
+        "annualized_volatility": 0.3340590672,
+        "max_drawdown": -0.3434520579,
+        "sharpe": -0.0562067886,
+        "sortino": -0.09338801420000001,
+        "sharpe_annualized": -0.8922555311,
+        "sortino_annualized": -1.4824887656
+      },
+      "equal_weight_stats": {
+        "final_value": 0.8891904291,
+        "cumulative_return": -0.1108095709,
+        "annualized_return": -0.1120668734,
+        "annualized_volatility": 0.2254709614,
+        "max_drawdown": -0.22138304690000002,
+        "sharpe": -0.026123699400000002,
+        "sortino": -0.041221360900000004,
+        "sharpe_annualized": -0.414701164,
+        "sortino_annualized": -0.6543688182
+      },
+      "ic_mean": 0.016717674573405113,
+      "ic_tstat": 1.0415663633738461,
+      "volatility": 0.2175501976874264,
+      "max_drawdown": -0.20796923284513336,
+      "daily_metrics_path": "results/runs/m-xgb-raw__f-xgboost__e-none__cw-na__lb-60__sp-2041bcaeeadb__sd-42__tg-fixed-medium/xgb_raw_daily_metrics_reb1.csv"
+    },
+    "5": {
+      "stats": {
+        "final_value": 0.881759347666624,
+        "cumulative_return": -0.12125214399345863,
+        "annualized_return": -0.12216035077422582,
+        "annualized_volatility": 0.21586068138559628,
+        "max_drawdown": -0.20209895251215404,
+        "sharpe": -0.03023393367278188,
+        "sortino": -0.04839960179663034,
+        "sharpe_annualized": -0.4799491708772963,
+        "sortino_annualized": -0.7683198594506331,
+        "avg_turnover": 0.1476
+      },
+      "buy_and_hold_stats": {
+        "final_value": 0.7049108139,
+        "cumulative_return": -0.2950891861,
+        "annualized_return": -0.2980527705,
+        "annualized_volatility": 0.3340590672,
+        "max_drawdown": -0.3434520579,
+        "sharpe": -0.0562067886,
+        "sortino": -0.09338801420000001,
+        "sharpe_annualized": -0.8922555311,
+        "sortino_annualized": -1.4824887656
+      },
+      "equal_weight_stats": {
+        "final_value": 0.8922657057000001,
+        "cumulative_return": -0.1077342943,
+        "annualized_return": -0.1089588813,
+        "annualized_volatility": 0.2250683946,
+        "max_drawdown": -0.2194262751,
+        "sharpe": -0.0252181317,
+        "sortino": -0.0398198847,
+        "sharpe_annualized": -0.4003257127,
+        "sortino_annualized": -0.6321210730000001
+      },
+      "ic_mean": 0.016717674573405113,
+      "ic_tstat": 1.0415663633738461,
+      "volatility": 0.2154285274358549,
+      "max_drawdown": -0.20209895251215404,
+      "daily_metrics_path": "results/runs/m-xgb-raw__f-xgboost__e-none__cw-na__lb-60__sp-2041bcaeeadb__sd-42__tg-fixed-medium/xgb_raw_daily_metrics_reb5.csv"
+    },
+    "21": {
+      "stats": {
+        "final_value": 0.8917926414665232,
+        "cumulative_return": -0.11125311711761476,
+        "annualized_return": -0.11209129203229828,
+        "annualized_volatility": 0.214255366945394,
+        "max_drawdown": -0.16705578469190885,
+        "sharpe": -0.027218623162609965,
+        "sortino": -0.04512159748276389,
+        "sharpe_annualized": -0.43208256764343655,
+        "sortino_annualized": -0.7162831541841078,
+        "avg_turnover": 0.03960000000000001
+      },
+      "buy_and_hold_stats": {
+        "final_value": 0.7049108139,
+        "cumulative_return": -0.2950891861,
+        "annualized_return": -0.2980527705,
+        "annualized_volatility": 0.3340590672,
+        "max_drawdown": -0.3434520579,
+        "sharpe": -0.0562067886,
+        "sortino": -0.09338801420000001,
+        "sharpe_annualized": -0.8922555311,
+        "sortino_annualized": -1.4824887656
+      },
+      "equal_weight_stats": {
+        "final_value": 0.8921339957000001,
+        "cumulative_return": -0.1078660043,
+        "annualized_return": -0.1090919952,
+        "annualized_volatility": 0.224051152,
+        "max_drawdown": -0.2201486444,
+        "sharpe": -0.0254384488,
+        "sortino": -0.0400407605,
+        "sharpe_annualized": -0.403823142,
+        "sortino_annualized": -0.6356273678000001
+      },
+      "ic_mean": 0.016717674573405113,
+      "ic_tstat": 1.0415663633738461,
+      "volatility": 0.21382642684159925,
+      "max_drawdown": -0.16705578469190885,
+      "daily_metrics_path": "results/runs/m-xgb-raw__f-xgboost__e-none__cw-na__lb-60__sp-2041bcaeeadb__sd-42__tg-fixed-medium/xgb_raw_daily_metrics_reb21.csv"
+    }
+  },
+  "prediction_rows": 8000,
+  "prediction_unique_pairs": 8000,
+  "baseline_context": {
+    "global_buy_and_hold": {
+      "start_date": "2000-03-29",
+      "end_date": "2022-12-30",
+      "final_value": 16.124723383062083
+    },
+    "test_window_buy_and_hold": {
+      "start_date": "2022-01-03",
+      "end_date": "2022-12-29",
+      "final_value": 0.7049108139,
+      "rebased": true
+    }
+  }
+}

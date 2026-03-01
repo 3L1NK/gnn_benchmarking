@@ -1,0 +1,36 @@
+entry_name,strategy_kind,run_tag,model_name,edge_type,rebalance_freq,fold_year,fold_label,configured_test_start,observed_test_start,observed_test_end,summary_scope,n_folds,portfolio_sharpe_annualized,portfolio_annualized_return,portfolio_max_drawdown,portfolio_turnover
+Buy and hold (fixed shares),baseline_buy_and_hold,,baseline,none,5,2020,test_2020,2020-01-01,2020-01-02,2020-12-30,fold,1,1.2618359573,0.5091658914,-0.31130519370000004,0.0
+Buy and hold (fixed shares),baseline_buy_and_hold,,baseline,none,5,2021,test_2021,2021-01-01,2021-01-04,2021-12-30,fold,1,2.1339828721,0.506072897,-0.10275581,0.0
+Buy and hold (fixed shares),baseline_buy_and_hold,,baseline,none,5,2022,test_2022,2022-01-01,2022-01-03,2022-12-29,fold,1,-0.8922555311,-0.2980527705,-0.3434520579,0.0
+Buy and hold (fixed shares),baseline_buy_and_hold,,baseline,none,5,2023,test_2023,2023-01-01,2023-01-03,2023-12-28,fold,1,2.6583074135,0.7445041800000001,-0.11661325040000001,0.0
+Buy and hold (fixed shares),baseline_buy_and_hold,,baseline,none,5,2024,test_2024,2024-01-01,2024-01-02,2024-12-27,fold,1,2.1473161247,0.9224739788,-0.1888950401,0.0
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,,baseline,none,5,2020,test_2020,2020-01-01,2020-01-02,2020-12-30,fold,1,0.5293755213,0.135379135,-0.3465979981,0.0
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,,baseline,none,5,2021,test_2021,2021-01-01,2021-01-04,2021-12-30,fold,1,2.5478677158,0.3648137906,-0.044296439900000005,0.0
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,,baseline,none,5,2022,test_2022,2022-01-01,2022-01-03,2022-12-29,fold,1,-0.4003257127,-0.1089588813,-0.2194262751,0.0
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,,baseline,none,5,2023,test_2023,2023-01-01,2023-01-03,2023-12-28,fold,1,1.3228409498,0.1729996778,-0.10996560450000001,0.0
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,,baseline,none,5,2024,test_2024,2024-01-01,2024-01-02,2024-12-27,fold,1,2.1363308112,0.25976119410000004,-0.060381296200000004,0.0
+GAT (corr+sec+gr),model_long_only_topk,gat_corr_sector_granger_rolling_cv_y2020,gat,corr+sector+granger,5,2020,test_2020,2020-01-01,2020-01-02,2020-12-30,fold,1,0.699790035218618,0.216420133442172,-0.310241275399236,0.13809523809523802
+GAT (corr+sec+gr),model_long_only_topk,gat_corr_sector_granger_rolling_cv_y2021,gat,corr+sector+granger,5,2021,test_2021,2021-01-01,2021-01-04,2021-12-30,fold,1,2.438634296123884,0.32565165029757404,-0.057761408328991,0.150996015936255
+GAT (corr+sec+gr),model_long_only_topk,gat_corr_sector_granger_rolling_cv_y2022,gat,corr+sector+granger,5,2022,test_2022,2022-01-01,2022-01-03,2022-12-29,fold,1,-0.42445883314243804,-0.11361365901709002,-0.232609887119737,0.1496
+GAT (corr+sec+gr),model_long_only_topk,gat_corr_sector_granger_rolling_cv_y2023,gat,corr+sector+granger,5,2023,test_2023,2023-01-01,2023-01-03,2023-12-28,fold,1,1.119213755086209,0.138364996065541,-0.09644825721521101,0.14859437751004
+GAT (corr+sec+gr),model_long_only_topk,gat_corr_sector_granger_rolling_cv_y2024,gat,corr+sector+granger,5,2024,test_2024,2024-01-01,2024-01-02,2024-12-27,fold,1,1.952980884013709,0.24091942534934002,-0.071010791546932,0.1504
+XGB,model_long_only_topk,xgb_raw_rolling_cv_y2020,xgb_raw,none,5,2020,test_2020,2020-01-01,2020-01-02,2020-12-30,fold,1,0.6503802700047341,0.187423407603573,-0.304566835940817,0.14166666666666602
+XGB,model_long_only_topk,xgb_raw_rolling_cv_y2021,xgb_raw,none,5,2021,test_2021,2021-01-01,2021-01-04,2021-12-30,fold,1,2.2416727778850802,0.28182087797603,-0.049038529662256004,0.147011952191235
+XGB,model_long_only_topk,xgb_raw_rolling_cv_y2022,xgb_raw,none,5,2022,test_2022,2022-01-01,2022-01-03,2022-12-29,fold,1,-0.47994917087729605,-0.122160350774225,-0.202098952512154,0.1476
+XGB,model_long_only_topk,xgb_raw_rolling_cv_y2023,xgb_raw,none,5,2023,test_2023,2023-01-01,2023-01-03,2023-12-28,fold,1,1.805150208181862,0.220332412020588,-0.09222532337386401,0.14216867469879502
+XGB,model_long_only_topk,xgb_raw_rolling_cv_y2024,xgb_raw,none,5,2024,test_2024,2024-01-01,2024-01-02,2024-12-27,fold,1,2.089369398974359,0.252831949448778,-0.055886722517451005,0.1496
+XGB+Node2Vec (n2v-corr),model_long_only_topk,xgb_node2vec_corr_rolling_cv_y2020,xgb_node2vec,node2vec_correlation,5,2020,test_2020,2020-01-01,2020-01-02,2020-12-30,fold,1,0.592813758521727,0.162845084796083,-0.32994603674787304,0.143650793650793
+XGB+Node2Vec (n2v-corr),model_long_only_topk,xgb_node2vec_corr_rolling_cv_y2021,xgb_node2vec,node2vec_correlation,5,2021,test_2021,2021-01-01,2021-01-04,2021-12-30,fold,1,2.283125781794766,0.282461405665729,-0.055918844832723004,0.13705179282868502
+XGB+Node2Vec (n2v-corr),model_long_only_topk,xgb_node2vec_corr_rolling_cv_y2022,xgb_node2vec,node2vec_correlation,5,2022,test_2022,2022-01-01,2022-01-03,2022-12-29,fold,1,-0.43217337686488705,-0.111428404887056,-0.208839070995801,0.1428
+XGB+Node2Vec (n2v-corr),model_long_only_topk,xgb_node2vec_corr_rolling_cv_y2023,xgb_node2vec,node2vec_correlation,5,2023,test_2023,2023-01-01,2023-01-03,2023-12-28,fold,1,1.658612067111412,0.19796807606612202,-0.10621543937195901,0.13534136546184702
+XGB+Node2Vec (n2v-corr),model_long_only_topk,xgb_node2vec_corr_rolling_cv_y2024,xgb_node2vec,node2vec_correlation,5,2024,test_2024,2024-01-01,2024-01-02,2024-12-27,fold,1,2.047191145101298,0.25224626984236,-0.052187159991367006,0.1356
+Buy and hold (fixed shares),baseline_buy_and_hold,,baseline,none,5,,mean,,,,mean,5,1.4618373673,0.47683283534000004,-0.21260427042000002,0.0
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,,baseline,none,5,,mean,,,,mean,5,1.22721785708,0.16479898324000003,-0.15613352276,0.0
+GAT (corr+sec+gr),model_long_only_topk,,gat,corr+sector+granger,5,,mean,,,,mean,5,1.1572320274599965,0.1615485092275074,-0.15361432392202143,0.1475371263083066
+XGB,model_long_only_topk,,xgb_raw,none,5,,mean,,,,mean,5,1.261324696833748,0.1640496592549488,-0.14076327280130843,0.14560945871133923
+XGB+Node2Vec (n2v-corr),model_long_only_topk,,xgb_node2vec,node2vec_correlation,5,,mean,,,,mean,5,1.229913875132863,0.1568184862966476,-0.15062131038794463,0.13888879038826502
+Buy and hold (fixed shares),baseline_buy_and_hold,,baseline,none,5,,std,,,,std,5,1.2597583273169999,0.41775401550541974,0.09869762259368445,0.0
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,,baseline,none,5,,std,,,,std,5,1.0691705369758744,0.15805055641402158,0.1132167721988294,0.0
+GAT (corr+sec+gr),model_long_only_topk,,gat,corr+sector+granger,5,,std,,,,std,5,0.9987644928266941,0.14999478157231722,0.10005137190985895,0.0047892054504364324
+XGB,model_long_only_topk,,xgb_raw,none,5,,std,,,,std,5,1.0341928592486036,0.14654869854267058,0.09855664638107862,0.0031380970695004985
+XGB+Node2Vec (n2v-corr),model_long_only_topk,,xgb_node2vec,node2vec_correlation,5,,std,,,,std,5,1.012858350213542,0.14041268341387395,0.10599659000314984,0.0035985875440142988

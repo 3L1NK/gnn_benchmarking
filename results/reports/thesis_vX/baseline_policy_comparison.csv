@@ -1,0 +1,7 @@
+strategy_name,strategy_kind,rebalance_freq,rebalance_label,portfolio_sharpe_annualized,portfolio_annualized_return,portfolio_max_drawdown,portfolio_final_value,test_start_date,test_end_date,source_run_tag
+Buy and hold (fixed shares),baseline_buy_and_hold,1,reb=1,2.1339828721186667,0.5060728969654211,-0.1027558099962117,1.501186039472033,2021-01-04,2021-12-30,xgb_node2vec_corr_rolling_cv_y2021
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,1,reb=1,2.5424948795202282,0.3641861664238639,-0.04406413936909559,1.3608279338922102,2021-01-04,2021-12-30,xgb_node2vec_corr_rolling_cv_y2021
+Buy and hold (fixed shares),baseline_buy_and_hold,5,reb=5,2.1339828721,0.506072897,-0.10275581,1.5011860395,2021-01-04,2021-12-30,gat_corr_sector_granger_rolling_cv_y2021
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,5,reb=5,2.5478677158,0.3648137906,-0.044296439900000005,1.3614490431,2021-01-04,2021-12-30,gat_corr_sector_granger_rolling_cv_y2021
+Buy and hold (fixed shares),baseline_buy_and_hold,21,reb=21,2.1473161247,0.9224739788,-0.1888950401,1.9075730534,2024-01-02,2024-12-27,gat_corr_sector_granger_rolling_cv_y2024
+"Equal weight (rebalanced, all assets)",baseline_equal_weight,21,reb=21,2.1678156388,0.2630061279,-0.0594108072,1.2595002262,2024-01-02,2024-12-27,gat_corr_sector_granger_rolling_cv_y2024

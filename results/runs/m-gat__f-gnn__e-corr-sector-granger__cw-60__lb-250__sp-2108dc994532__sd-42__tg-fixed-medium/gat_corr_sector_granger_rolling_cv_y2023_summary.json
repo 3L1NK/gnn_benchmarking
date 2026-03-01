@@ -1,0 +1,186 @@
+{
+  "run_tag": "gat_corr_sector_granger_rolling_cv_y2023",
+  "model_type": "gat",
+  "protocol_version": "v1_rolling_cv_subset",
+  "target_policy_hash": "13a0f67e443c",
+  "stats": {
+    "final_value": 1.1408822450471687,
+    "cumulative_return": 0.13661011015128022,
+    "annualized_return": 0.1383649960655411,
+    "annualized_volatility": 0.1263143637653295,
+    "max_drawdown": -0.09644825721521144,
+    "sharpe": 0.07050375091566191,
+    "sortino": 0.10787850730319333,
+    "sharpe_annualized": 1.1192137550862093,
+    "sortino_annualized": 1.7125182127986887,
+    "avg_turnover": 0.14859437751004015
+  },
+  "buy_and_hold_stats": {
+    "final_value": 1.7291630661,
+    "cumulative_return": 0.7291630661,
+    "annualized_return": 0.7445041800000001,
+    "annualized_volatility": 0.2184163821,
+    "max_drawdown": -0.11661325040000001,
+    "sharpe": 0.16745750510000001,
+    "sortino": 0.3364767569,
+    "sharpe_annualized": 2.6583074135,
+    "sortino_annualized": 5.3414029242
+  },
+  "equal_weight_stats": {
+    "final_value": 1.1700325025,
+    "cumulative_return": 0.17003250250000002,
+    "annualized_return": 0.1729996778,
+    "annualized_volatility": 0.1267032432,
+    "max_drawdown": -0.10996560450000001,
+    "sharpe": 0.0833310427,
+    "sortino": 0.1317514264,
+    "sharpe_annualized": 1.3228409498,
+    "sortino_annualized": 2.0914890546
+  },
+  "ic_mean": 0.0026468492993898182,
+  "ic_tstat": 0.17702457993371937,
+  "volatility": 0.12606046528999085,
+  "max_drawdown": -0.09644825721521144,
+  "stats_by_rebalance_freq": {
+    "1": {
+      "stats": {
+        "final_value": 1.234810327129565,
+        "cumulative_return": 0.2301864701879437,
+        "annualized_return": 0.23326081756043093,
+        "annualized_volatility": 0.12357053454961946,
+        "max_drawdown": -0.0958159119652825,
+        "sharpe": 0.11273918943493691,
+        "sortino": 0.17810301829918998,
+        "sharpe_annualized": 1.7896814486491537,
+        "sortino_annualized": 2.827297765017856,
+        "avg_turnover": 0.6305220883534136
+      },
+      "buy_and_hold_stats": {
+        "final_value": 1.7291630661,
+        "cumulative_return": 0.7291630661,
+        "annualized_return": 0.7445041800000001,
+        "annualized_volatility": 0.2184163821,
+        "max_drawdown": -0.11661325040000001,
+        "sharpe": 0.16745750510000001,
+        "sortino": 0.3364767569,
+        "sharpe_annualized": 2.6583074135,
+        "sortino_annualized": 5.3414029242
+      },
+      "equal_weight_stats": {
+        "final_value": 1.1694392634,
+        "cumulative_return": 0.1694392634,
+        "annualized_return": 0.172395344,
+        "annualized_volatility": 0.1266401835,
+        "max_drawdown": -0.11015617670000001,
+        "sharpe": 0.0831120974,
+        "sortino": 0.1316274003,
+        "sharpe_annualized": 1.3193652979000001,
+        "sortino_annualized": 2.089520202
+      },
+      "ic_mean": 0.0026468492993898182,
+      "ic_tstat": 0.17702457993371937,
+      "volatility": 0.12332215131446166,
+      "max_drawdown": -0.0958159119652825,
+      "daily_metrics_path": "results/runs/m-gat__f-gnn__e-corr-sector-granger__cw-60__lb-250__sp-2108dc994532__sd-42__tg-fixed-medium/gat_daily_metrics_reb1.csv"
+    },
+    "5": {
+      "stats": {
+        "final_value": 1.1408822450471687,
+        "cumulative_return": 0.13661011015128022,
+        "annualized_return": 0.1383649960655411,
+        "annualized_volatility": 0.1263143637653295,
+        "max_drawdown": -0.09644825721521144,
+        "sharpe": 0.07050375091566191,
+        "sortino": 0.10787850730319333,
+        "sharpe_annualized": 1.1192137550862093,
+        "sortino_annualized": 1.7125182127986887,
+        "avg_turnover": 0.14859437751004015
+      },
+      "buy_and_hold_stats": {
+        "final_value": 1.7291630661,
+        "cumulative_return": 0.7291630661,
+        "annualized_return": 0.7445041800000001,
+        "annualized_volatility": 0.2184163821,
+        "max_drawdown": -0.11661325040000001,
+        "sharpe": 0.16745750510000001,
+        "sortino": 0.3364767569,
+        "sharpe_annualized": 2.6583074135,
+        "sortino_annualized": 5.3414029242
+      },
+      "equal_weight_stats": {
+        "final_value": 1.1700325025,
+        "cumulative_return": 0.17003250250000002,
+        "annualized_return": 0.1729996778,
+        "annualized_volatility": 0.1267032432,
+        "max_drawdown": -0.10996560450000001,
+        "sharpe": 0.0833310427,
+        "sortino": 0.1317514264,
+        "sharpe_annualized": 1.3228409498,
+        "sortino_annualized": 2.0914890546
+      },
+      "ic_mean": 0.0026468492993898182,
+      "ic_tstat": 0.17702457993371937,
+      "volatility": 0.12606046528999085,
+      "max_drawdown": -0.09644825721521144,
+      "daily_metrics_path": "results/runs/m-gat__f-gnn__e-corr-sector-granger__cw-60__lb-250__sp-2108dc994532__sd-42__tg-fixed-medium/gat_daily_metrics_reb5.csv"
+    },
+    "21": {
+      "stats": {
+        "final_value": 1.1793431601718298,
+        "cumulative_return": 0.17492700496328828,
+        "annualized_return": 0.17721121416114527,
+        "annualized_volatility": 0.11566597914888166,
+        "max_drawdown": -0.09568712718724004,
+        "sharpe": 0.09457983414109043,
+        "sortino": 0.14910514645774667,
+        "sharpe_annualized": 1.5014103816732058,
+        "sortino_annualized": 2.3669708203623663,
+        "avg_turnover": 0.037349397590361454
+      },
+      "buy_and_hold_stats": {
+        "final_value": 1.7291630661,
+        "cumulative_return": 0.7291630661,
+        "annualized_return": 0.7445041800000001,
+        "annualized_volatility": 0.2184163821,
+        "max_drawdown": -0.11661325040000001,
+        "sharpe": 0.16745750510000001,
+        "sortino": 0.3364767569,
+        "sharpe_annualized": 2.6583074135,
+        "sortino_annualized": 5.3414029242
+      },
+      "equal_weight_stats": {
+        "final_value": 1.1700283518,
+        "cumulative_return": 0.1700283518,
+        "annualized_return": 0.1729954493,
+        "annualized_volatility": 0.1268596622,
+        "max_drawdown": -0.1107324452,
+        "sharpe": 0.0832363765,
+        "sortino": 0.1318273654,
+        "sharpe_annualized": 1.3213381673,
+        "sortino_annualized": 2.0926945495
+      },
+      "ic_mean": 0.0026468492993898182,
+      "ic_tstat": 0.17702457993371937,
+      "volatility": 0.11543348448335798,
+      "max_drawdown": -0.09568712718724004,
+      "daily_metrics_path": "results/runs/m-gat__f-gnn__e-corr-sector-granger__cw-60__lb-250__sp-2108dc994532__sd-42__tg-fixed-medium/gat_daily_metrics_reb21.csv"
+    }
+  },
+  "prediction_rows": 7968,
+  "prediction_unique_pairs": 7968,
+  "baseline_context": {
+    "global_buy_and_hold": {
+      "start_date": "2000-03-29",
+      "end_date": "2023-12-29",
+      "final_value": 27.378815227073616
+    },
+    "test_window_buy_and_hold": {
+      "start_date": "2023-01-03",
+      "end_date": "2023-12-28",
+      "final_value": 1.7291630661,
+      "rebased": true
+    }
+  },
+  "graph_directed": true,
+  "graph_make_undirected": false
+}

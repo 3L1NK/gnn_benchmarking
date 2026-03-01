@@ -10,16 +10,16 @@
 \toprule
 Strategy & Type & Reb & Sharpe & Ann Return & Max DD & Final \\
 \midrule
-mlp & Model & reb=1 & 0.8703 & 0.1749 & -0.2806 & 2.2201 \\
-XGB+Node2Vec (corr) & Model & reb=1 & 0.6602 & 0.1200 & -0.2948 & 1.7477 \\
-GCN (sector) & Model & reb=1 & 0.6061 & 0.1126 & -0.3194 & 1.6848 \\
-GAT (corr) & Model & reb=1 & 0.5625 & 0.1055 & -0.3511 & 1.6311 \\
-GCN (granger) & Model & reb=1 & 0.5541 & 0.0954 & -0.2902 & 1.5644 \\
-GCN (corr+sec+gr) & Model & reb=1 & 0.5365 & 0.0895 & -0.2511 & 1.5212 \\
-LSTM & Model & reb=1 & 0.5323 & 0.0975 & -0.3523 & 1.5743 \\
-XGB & Model & reb=1 & 0.5115 & 0.0854 & -0.2915 & 1.4995 \\
-Buy and hold (fixed shares) & Baseline & reb=1 & 1.2273 & 0.3842 & -0.3471 & 5.0493 \\
-Equal weight (rebalanced, all assets) & Baseline & reb=1 & 0.7667 & 0.1519 & -0.3465 & 2.0222 \\
+xgb-node2vec-corr-rolling-cv-y2021 & Model & reb=1 & 2.4224 & 0.3095 & -0.0623 & 1.3176 \\
+GAT (corr+sector+granger+rolling+cv+y2021) & Model & reb=1 & 2.3337 & 0.3133 & -0.0567 & 1.3252 \\
+xgb-raw-rolling-cv-y2021 & Model & reb=1 & 2.3078 & 0.2967 & -0.0448 & 1.3068 \\
+xgb-node2vec-corr-rolling-cv-y2024 & Model & reb=1 & 2.2857 & 0.2741 & -0.0483 & 1.2610 \\
+GAT (corr+sector+granger+rolling+cv+y2024) & Model & reb=1 & 2.1880 & 0.2881 & -0.0584 & 1.2801 \\
+xgb-raw-rolling-cv-y2024 & Model & reb=1 & 1.8310 & 0.2134 & -0.0530 & 1.2030 \\
+GAT (corr+sector+granger+rolling+cv+y2023) & Model & reb=1 & 1.7897 & 0.2333 & -0.0958 & 1.2348 \\
+xgb-node2vec-corr-rolling-cv-y2023 & Model & reb=1 & 1.6539 & 0.2074 & -0.0975 & 1.2134 \\
+Buy and hold (fixed shares) & Baseline & reb=1 & 2.1340 & 0.5061 & -0.1028 & 1.5012 \\
+Equal weight (rebalanced, all assets) & Baseline & reb=1 & 2.5425 & 0.3642 & -0.0441 & 1.3608 \\
 \bottomrule
 \end{tabular}
 }

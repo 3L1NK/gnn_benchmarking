@@ -10,13 +10,15 @@
 \toprule
 Strategy & Policy & Type & Rebalance & Final & Ann Return & Ann Vol & Sharpe & Max DD & Turnover \\
 \midrule
-Buy and hold (fixed shares) & Buy and hold (fixed shares) & baseline & reb=1 & 5.0493 & 0.3842 & 0.3131 & 1.2273 & -0.3471 & 0.0000 \\
-Buy and hold (fixed shares) & Buy and hold (fixed shares) & baseline & reb=5 & 5.0493 & 0.3842 & 0.3131 & 1.2273 & -0.3471 & 0.0000 \\
-Equal weight (rebalanced, all assets) & Equal weight (rebalanced, all assets) & baseline & reb=1 & 2.0222 & 0.1519 & 0.1981 & 0.7667 & -0.3465 & 0.0115 \\
-Equal weight (rebalanced, all assets) & Equal weight (rebalanced, all assets) & baseline & reb=5 & 2.0222 & 0.1519 & 0.1981 & 0.7667 & -0.3465 & 0.0057 \\
-mlp\_tuned\_all (Top K long-only (equal weight within Top K)) & Top K long-only (equal weight within Top K) & model & reb=5 & 2.0996 & 0.1618 & 0.2157 & 0.7983 & -0.3305 & 0.1381 \\
-xgb\_node2vec\_corr\_tuned\_all (Top K long-only (equal weight within Top K)) & Top K long-only (equal weight within Top K) & model & reb=5 & 2.1904 & 0.1717 & 0.1987 & 0.8919 & -0.3275 & 0.1361 \\
-xgb\_raw\_tuned\_all (Top K long-only (equal weight within Top K)) & Top K long-only (equal weight within Top K) & model & reb=5 & 2.0447 & 0.1550 & 0.1967 & 0.8285 & -0.3103 & 0.1402 \\
+Buy and hold (fixed shares) & Buy and hold (fixed shares) & baseline & reb=1 & 1.5012 & 0.5061 & 0.2371 & 2.1340 & -0.1028 & 0.0000 \\
+Buy and hold (fixed shares) & Buy and hold (fixed shares) & baseline & reb=5 & 1.5012 & 0.5061 & 0.2371 & 2.1340 & -0.1028 & 0.0000 \\
+Buy and hold (fixed shares) & Buy and hold (fixed shares) & baseline & reb=21 & 1.9076 & 0.9225 & 0.4296 & 2.1473 & -0.1889 & 0.0000 \\
+Equal weight (rebalanced, all assets) & Equal weight (rebalanced, all assets) & baseline & reb=1 & 1.3608 & 0.3642 & 0.1432 & 2.5425 & -0.0441 & 0.0110 \\
+Equal weight (rebalanced, all assets) & Equal weight (rebalanced, all assets) & baseline & reb=5 & 1.3614 & 0.3648 & 0.1432 & 2.5479 & -0.0443 & 0.0057 \\
+Equal weight (rebalanced, all assets) & Equal weight (rebalanced, all assets) & baseline & reb=21 & 1.2595 & 0.2630 & 0.1213 & 2.1678 & -0.0594 & 0.0034 \\
+gat\_corr\_sector\_granger\_rolling\_cv\_y2021 (Top K long-only (equal weight within Top K)) & Top K long-only (equal weight within Top K) & model & reb=5 & 1.3376 & 0.3257 & 0.1229 & 2.4386 & -0.0578 & 0.1510 \\
+xgb\_node2vec\_corr\_rolling\_cv\_y2021 (Top K long-only (equal weight within Top K)) & Top K long-only (equal weight within Top K) & model & reb=5 & 1.2906 & 0.2825 & 0.1151 & 2.2831 & -0.0559 & 0.1371 \\
+xgb\_raw\_rolling\_cv\_y2021 (Top K long-only (equal weight within Top K)) & Top K long-only (equal weight within Top K) & model & reb=5 & 1.2918 & 0.2818 & 0.1178 & 2.2417 & -0.0490 & 0.1470 \\
 \bottomrule
 \end{tabular}
 }

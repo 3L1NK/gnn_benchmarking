@@ -28,7 +28,7 @@ def main() -> None:
     parser.add_argument("--build-pdf", action="store_true", help="Compile thesis/main.tex at the end.")
     parser.add_argument("--results", type=str, default="results/results_tuned_all.jsonl")
     parser.add_argument("--report-out", type=str, default="results/reports/thesis_tuned_all")
-    parser.add_argument("--expected-runs", type=int, default=30)
+    parser.add_argument("--expected-runs", type=int, default=45)
     parser.add_argument("--skip-prediction-audit", action="store_true")
     args = parser.parse_args()
 
